@@ -1,13 +1,17 @@
 from .registration import (
+    SkillRegistry,
     list_pipelines,
     make_pipeline,
     register_pipeline,
+    register_skill,
     unregister_pipeline,
 )
 
 __all__ = [
-    "register_pipeline",
-    "make_pipeline",
+    "SkillRegistry",
     "list_pipelines",
+    "make_pipeline",
+    "register_pipeline",
+    "register_skill",
     "unregister_pipeline",
 ]

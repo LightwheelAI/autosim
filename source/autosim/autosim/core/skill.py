@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Any
 
 import torch
 from isaaclab.utils import configclass
@@ -28,8 +27,7 @@ class Skill(ABC):
     """The configuration of the skill."""
 
     def __init__(self, extra_cfg: dict = {}) -> None:
-        self._status = SkillStatus.IDLE
-        self._internal_state: dict[str, Any] = {}
+        self._status: SkillStatus = SkillStatus.IDLE
         self.cfg.extra_cfg.update(extra_cfg)
 
         # initialize dependent modules
@@ -68,7 +66,6 @@ class Skill(ABC):
     def reset(self) -> None:
         """Reset the skill."""
         self._status = SkillStatus.IDLE
-        self._internal_state.clear()
 
     def _init_modules(self) -> None:
         """Initialize the dependent modules."""

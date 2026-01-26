@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from autosim.core.pipeline import AutoSimPipeline as Pipeline
-    from autosim.core.skill import Skill, SkillCfg
+    from autosim.core.skill import Skill
 
 
 # ============================================================================
@@ -196,15 +196,10 @@ class SkillRegistry:
         return cls._instance
 
     @classmethod
-    def get_instance(cls) -> SkillRegistry:
-        """Get the instance of the skill registry."""
-        if cls._instance is None:
-            cls._instance = SkillRegistry()
-        return cls._instance
-
-    @classmethod
     def register(cls, skill_cls: type) -> type:
         """Register a skill in the registry."""
+        from autosim.core.skill import Skill
+
         if not issubclass(skill_cls, Skill):
             raise TypeError(f"Skill class '{skill_cls.__name__}' must inherit from Skill.")
 
@@ -261,6 +256,8 @@ def register_skill(name: str, description: str, required_modules: list[str] = []
     """
 
     def decorator(cls: type) -> type:
+        from autosim.core.skill import SkillCfg
+
         cls.cfg = SkillCfg(name=name, description=description, required_modules=required_modules)
         SkillRegistry.register(cls)
         return cls
