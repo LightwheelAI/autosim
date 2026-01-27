@@ -13,7 +13,7 @@ class SkillCfg:
     name: str = "base_skill"
     """The name of the skill."""
     description: str = "Base skill class."
-    """The description of the skill."""
+    """The description of the skill (for prompt generation)."""
     required_modules: list[str] = []
     """The required modules for the skill."""
     extra_cfg: dict = {}

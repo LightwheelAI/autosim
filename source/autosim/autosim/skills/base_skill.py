@@ -29,3 +29,14 @@ class GripperSkillBase(Skill):
             success=done,
             info={"step": self._step_count, "target_object": self._target_object_name},
         )
+
+
+class CuroboSkillBase(Skill):
+    """Base class for skills dependent on curobo."""
+
+    def __init__(self, extra_cfg: dict = {}) -> None:
+        super().__init__(extra_cfg)
+
+    def _init_modules(self) -> None:
+        # curobo related modules
+        pass

@@ -71,11 +71,14 @@ class SkillOutput:
 
 @dataclass
 class EnvExtraInfo:
-    """Extra information from the environment."""
+    """Extra information from the environment. Almost used in prompt building."""
 
     task_name: str
     """The name of the task."""
     objects: list[str] | None = None
+    """The objects in the environment."""
+    additional_prompt_contents: str | None = None
+    """The additional prompt contents for the task decomposition."""
 
 
 @dataclass
@@ -127,10 +130,88 @@ class WorldState:
 
 
 @dataclass
+class ObjectInfo:
+    """Information of the object."""
+
+    name: str
+    """The name of the object."""
+    type: str
+    """The type of the object."""
+    graspable: bool
+    """Whether the object is graspable."""
+    initial_location: str
+    """The initial location of the object."""
+    target_location: str
+    """The target location of the object."""
+    role: str
+    """The role of the object. "manipulated" (needs operation) or "static" (no operation needed)"""
+
+
+@dataclass
+class FixtureInfo:
+    """Information of the fixture."""
+
+    name: str
+    """The name of the fixture."""
+    type: str
+    """The type of the fixture."""
+    interactive: bool
+    """Whether the fixture is interactive."""
+    interaction_type: str
+    """The type of interaction with the fixture."""
+
+
+@dataclass
+class SkillInfo:
+    """Information of the skill."""
+
+    step: int
+    """The step of the skill, globally sequential across all subtasks"""
+    skill_type: str
+    """The type of the skill, must be one of the atomic skills"""
+    target_object: str
+    """The target object of the skill."""
+    target_type: str
+    """The type of the target. "object", "fixture", "interactive_element", or "position"."""
+    description: str
+    """The description of the skill."""
+
+
+@dataclass
+class SubtaskResult:
+    """Result of the subtask."""
+
+    subtask_id: int
+    """The ID of the subtask."""
+    subtask_name: str
+    """The name of the subtask."""
+    description: str
+    """The description of the subtask."""
+    skills: list[SkillInfo]
+    """The skills of the subtask."""
+
+
+@dataclass
 class DecomposeResult:
     """Result of the task decomposition."""
 
     task_name: str
     """The name of the task."""
-    # subtasks: list[SubtaskResult]s
+    task_description: str
+    """The description of the task."""
+    parent_classes: list[str]
+    """The parent classes of the task."""
+    objects: list[ObjectInfo]
+    """The objects of the task."""
+    fixtures: list[str]
+    """The fixtures of the task."""
+    interactive_elements: list[str]
+    """The interactive elements of the task."""
+    subtasks: list[SubtaskResult]
     """The subtasks of the task."""
+    success_conditions: list[str]
+    """The success conditions of the task."""
+    total_steps: int
+    """The total number of steps in the task."""
+    skill_sequence: list[str]
+    """The sequence of skills in the task."""

@@ -194,6 +194,11 @@ class SkillRegistry:
 
         if not issubclass(skill_cls, Skill):
             raise TypeError(f"Skill class '{skill_cls.__name__}' must inherit from Skill.")
+        if skill_cls.cfg.name in cls._skills and cls._skills[skill_cls.cfg.name] != skill_cls:
+            raise ValueError(
+                f"Skill with name '{skill_cls.cfg.name}' already registered with different class:"
+                f" {cls._skills[skill_cls.cfg.name]}"
+            )
 
         cls._skills[skill_cls.cfg.name] = skill_cls
         return skill_cls
