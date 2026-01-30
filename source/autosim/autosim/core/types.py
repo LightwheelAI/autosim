@@ -43,12 +43,6 @@ class SkillGoal:
     """The target object of the skill."""
     target_pose: torch.Tensor | None = None
     """The target pose of the skill."""
-    target_joint_pos: torch.Tensor | None = None
-    """The target joint positions of the skill."""
-    constraints: dict[str, Any] = field(default_factory=dict)
-    """The constraints of the skill."""
-    params: dict[str, Any] = field(default_factory=dict)
-    """The parameters of the skill."""
 
 
 @dataclass
@@ -56,7 +50,7 @@ class SkillOutput:
     """Output of the skill execution."""
 
     action: torch.Tensor
-    """The action of the skill."""
+    """The action of the skill. shape: [action_dim]"""
     done: bool
     """Whether the skill execution is done."""
     success: bool
@@ -72,7 +66,7 @@ class SkillOutput:
 
 @dataclass
 class EnvExtraInfo:
-    """Extra information from the environment. Almost used in prompt building."""
+    """Extra information from the environment."""
 
     task_name: str
     """The name of the task."""
@@ -80,8 +74,11 @@ class EnvExtraInfo:
     """The objects in the environment."""
     additional_prompt_contents: str | None = None
     """The additional prompt contents for the task decomposition."""
+
     robot_name: str = "robot"
     """The name of the robot in the scene."""
+    robot_base_link_name: str = "base_link"
+    """The name of the base link of the robot."""
     ee_link_name: str = "ee_link"
     """The name of the end-effector link."""
 
@@ -97,7 +94,7 @@ class WorldState:
     robot_ee_pose: torch.Tensor
     """The end-effector pose of the robot in the world frame. [x, y, z, qw, qx, qy, qz]"""
     robot_base_pose: torch.Tensor
-    """The base pose of the robot in the world frame. [x, y, z, qw, qx, qy, qz]"""
+    """The base pose of the robot in the world frame. [x, y, yaw]"""
     sim_joint_names: list[str]
     """The joint names of the robot."""
     objects: dict[str, torch.Tensor] = field(default_factory=dict)
@@ -234,7 +231,7 @@ class OccupancyMap:
     """The occupancy map of the environment. 2D array of shape [height, width] 0: free, 1: occupied, -1: unknown."""
     resolution: float
     """The resolution of the occupancy map, cell size in meters."""
-    origin: tuple[float, float, float]
+    origin: tuple[float, float]
     """The origin of the occupancy map, (x, y)."""
     map_bounds: MapBounds
     """The bounds of the occupancy map."""

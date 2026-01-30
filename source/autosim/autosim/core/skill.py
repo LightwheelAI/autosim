@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-import torch
+from isaaclab.envs import ManagerBasedEnv
 from isaaclab.utils import configclass
 
 from .types import SkillGoal, SkillInfo, SkillOutput, SkillStatus, WorldState
@@ -39,8 +39,39 @@ class Skill(ABC):
         return cls.cfg
 
     @abstractmethod
+    def extract_goal_from_info(self, skill_info: SkillInfo, env: ManagerBasedEnv) -> SkillGoal:
+        """Extract the goal from the skill information.
+
+        Args:
+            skill_info: The skill information.
+            env: The environment.
+
+        Returns:
+            The goal of the skill.
+        """
+        raise NotImplementedError(f"{self.__class__.__name__}.extract_goal_from_info() must be implemented.")
+
     def plan(self, state: WorldState, goal: SkillGoal) -> bool:
         """Plan the skill.
+
+        Args:
+            state: The current state of the world.
+            goal: The goal of the skill.
+
+        Returns:
+            True if the skill is planned successfully, False otherwise.
+        """
+        self._status = SkillStatus.PLANNING
+        success = self.execute_plan(state, goal)
+        if success:
+            self._status = SkillStatus.EXECUTING
+        else:
+            self._status = SkillStatus.FAILED
+        return success
+
+    @abstractmethod
+    def execute_plan(self, state: WorldState, goal: SkillGoal) -> bool:
+        """Execute the plan of the skill.
 
         Args:
             state: The current state of the world.
@@ -63,41 +94,9 @@ class Skill(ABC):
         """
         raise NotImplementedError(f"{self.__class__.__name__}.step() must be implemented.")
 
-    @abstractmethod
-    def extract_goal_from_info(self, skill_info: SkillInfo) -> SkillGoal:
-        """Extract the goal from the skill information.
-
-        Args:
-            skill_info: The skill information.
-
-        Returns:
-            The goal of the skill.
-        """
-        raise NotImplementedError(f"{self.__class__.__name__}.extract_goal_from_info() must be implemented.")
-
     def reset(self) -> None:
         """Reset the skill."""
         self._status = SkillStatus.IDLE
-
-    def __call__(self, state: WorldState, goal: SkillGoal) -> SkillOutput:
-        """
-        Convenient call interface
-        Automatically handles plan -> execute flow
-        """
-        if self._status == SkillStatus.IDLE and goal is not None:
-            self._status = SkillStatus.PLANNING
-            success = self.plan(state, goal)
-            if success:
-                self._status = SkillStatus.EXECUTING
-            else:
-                self._status = SkillStatus.FAILED
-                return SkillOutput(
-                    action=torch.zeros_like(state.robot_joint_pos),
-                    done=True,
-                    success=False,
-                    info={"error": "Failed to plan the skill."},
-                )
-        return self.step(state)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(status={self._status.value})"

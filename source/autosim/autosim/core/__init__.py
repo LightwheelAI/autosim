@@ -1,3 +1,4 @@
+from .action_adapter import ActionAdapterBase, ActionAdapterCfg
 from .registration import (
     SkillRegistry,
     list_pipelines,
@@ -14,4 +15,6 @@ __all__ = [
     "register_pipeline",
     "register_skill",
     "unregister_pipeline",
+    "ActionAdapterBase",
+    "ActionAdapterCfg",
 ]
