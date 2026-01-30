@@ -8,6 +8,7 @@ from autosim import register_skill
 from autosim.capabilities.navigation import AStarPlannerCfg, DWAPlannerCfg
 from autosim.core.skill import Skill, SkillCfg, SkillExtraCfg
 from autosim.core.types import (
+    EnvExtraInfo,
     OccupancyMap,
     SkillGoal,
     SkillInfo,
@@ -69,7 +70,9 @@ class NavigateSkill(Skill):
         self._global_path = None
         self._current_waypoint_idx = 0
 
-    def extract_goal_from_info(self, skill_info: SkillInfo, env: ManagerBasedEnv) -> SkillGoal:
+    def extract_goal_from_info(
+        self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
+    ) -> SkillGoal:
         target_object_name = skill_info.target_object
         if target_object_name not in env.scene.keys():
             raise ValueError(f"Object {target_object_name} not found in scene")

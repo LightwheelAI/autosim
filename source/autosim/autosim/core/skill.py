@@ -3,7 +3,14 @@ from abc import ABC, abstractmethod
 from isaaclab.envs import ManagerBasedEnv
 from isaaclab.utils import configclass
 
-from .types import SkillGoal, SkillInfo, SkillOutput, SkillStatus, WorldState
+from .types import (
+    EnvExtraInfo,
+    SkillGoal,
+    SkillInfo,
+    SkillOutput,
+    SkillStatus,
+    WorldState,
+)
 
 
 @configclass
@@ -39,12 +46,15 @@ class Skill(ABC):
         return cls.cfg
 
     @abstractmethod
-    def extract_goal_from_info(self, skill_info: SkillInfo, env: ManagerBasedEnv) -> SkillGoal:
+    def extract_goal_from_info(
+        self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
+    ) -> SkillGoal:
         """Extract the goal from the skill information.
 
         Args:
             skill_info: The skill information.
             env: The environment.
+            env_extra_info: The extra information of the environment.
 
         Returns:
             The goal of the skill.
