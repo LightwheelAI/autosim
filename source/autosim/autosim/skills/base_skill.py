@@ -1,9 +1,10 @@
 import torch
+from isaaclab.envs import ManagerBasedEnv
 from isaaclab.utils import configclass
 
 from autosim.capabilities.motion_planning import CuroboPlanner
 from autosim.core.skill import Skill, SkillExtraCfg
-from autosim.core.types import SkillGoal, SkillOutput, WorldState
+from autosim.core.types import SkillGoal, SkillInfo, SkillOutput, WorldState
 
 
 @configclass
@@ -42,6 +43,14 @@ class GripperSkillBase(Skill):
             success=done,
             info={"step": self._step_count, "target_object": self._target_object_name},
         )
+
+    def extract_goal_from_info(self, skill_info: SkillInfo, env: ManagerBasedEnv) -> SkillGoal:
+        return SkillGoal(target_object=skill_info.target_object)
+
+    def reset(self) -> None:
+        super().reset()
+        self._step_count = 0
+        self._target_object_name = None
 
 
 @configclass

@@ -15,10 +15,11 @@ class AutoSimLogger:
             self._logger = logging.getLogger(self._name)
             if not self._logger.handlers:
                 handler = logging.StreamHandler()
-                formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
+                formatter = logging.Formatter("[%(name)s] %(levelname)s: %(message)s")
                 handler.setFormatter(formatter)
                 self._logger.addHandler(handler)
                 self._logger.setLevel(self._level)
+            self._logger.propagate = False
         return self._logger
 
     def debug(self, msg, *args, **kwargs):

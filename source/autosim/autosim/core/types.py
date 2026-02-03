@@ -43,6 +43,8 @@ class SkillGoal:
     """The target object of the skill."""
     target_pose: torch.Tensor | None = None
     """The target pose of the skill."""
+    extra_target_poses: dict[str, torch.Tensor] | None = None
+    """The target poses of the extra end-effectors. dict[link_name, target_pose]."""
 
 
 @dataclass
@@ -57,8 +59,6 @@ class SkillOutput:
     """Whether the skill execution was successful."""
     info: dict[str, Any] = field(default_factory=dict)
     """The information of the skill execution."""
-    trajectory: torch.Tensor | None = None
-    """The trajectory of the skill execution."""
 
 
 """ENVIRONMENT RELATED TYPES"""
@@ -78,9 +78,14 @@ class EnvExtraInfo:
     robot_name: str = "robot"
     """The name of the robot in the scene."""
     robot_base_link_name: str = "base_link"
-    """The name of the base link of the robot."""
+    """The name of the base link of the robot (it is not necessarily the root link of the robot)."""
     ee_link_name: str = "ee_link"
     """The name of the end-effector link."""
+
+    object_grasp_poses: dict[str, list[torch.Tensor]] = field(default_factory=dict)
+    """The grasp poses in the objects frame. each object can have multiple grasp poses [x, y, z, qw, qx, qy, qz]."""
+    object_extra_target_poses: dict[str, list[torch.Tensor]] = field(default_factory=dict)
+    """The extra target poses for other end-effectors in the objects frame. each object can have multiple extra target poses [x, y, z, qw, qx, qy, qz]."""
 
 
 @dataclass

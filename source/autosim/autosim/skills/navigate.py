@@ -73,6 +73,8 @@ class NavigateSkill(Skill):
     def extract_goal_from_info(
         self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
     ) -> SkillGoal:
+        """Return the target pose[x, y, yaw] in the world frame."""
+
         target_object_name = skill_info.target_object
         if target_object_name not in env.scene.keys():
             raise ValueError(f"Object {target_object_name} not found in scene")
@@ -176,6 +178,7 @@ class NavigateSkill(Skill):
             The output of the skill execution.
                 action: The action to be applied to the environment. [vx, vy, vyaw] in the world frame.
         """
+
         current_pose = state.robot_base_pose  # [x, y, yaw]
 
         # Check if reached goal
@@ -284,4 +287,5 @@ class NavigateSkill(Skill):
 
     def _normalize_angle(self, angle: float) -> float:
         """Normalize angle to [-pi, pi]"""
+
         return float(torch.remainder(torch.tensor(angle) + np.pi, 2 * np.pi) - np.pi)
