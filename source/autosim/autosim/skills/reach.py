@@ -1,9 +1,17 @@
+import isaaclab.utils.math as PoseUtils
 import torch
+from isaaclab.envs import ManagerBasedEnv
 from isaaclab.utils import configclass
 
 from autosim import register_skill
 from autosim.core.skill import SkillCfg
-from autosim.core.types import SkillGoal, SkillOutput, WorldState
+from autosim.core.types import (
+    EnvExtraInfo,
+    SkillGoal,
+    SkillInfo,
+    SkillOutput,
+    WorldState,
+)
 
 from .base_skill import CuroboSkillBase, CuroboSkillExtraCfg
 
@@ -27,8 +35,130 @@ class ReachSkill(CuroboSkillBase):
     def __init__(self, extra_cfg: CuroboSkillExtraCfg) -> None:
         super().__init__(extra_cfg)
 
-    def plan(self, state: WorldState, goal: SkillGoal) -> bool:
-        return True
+        # variables for the skill execution
+        self._trajectory = None
+        self._step_idx = 0
+
+    def extract_goal_from_info(
+        self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
+    ) -> SkillGoal:
+        """Return the target pose[x, y, z, qw, qx, qy, qz] in the robot root frame.
+        IMPORTANT: the robot root frame is not the same as the robot base frame.
+        """
+
+        target_object = skill_info.target_object
+        robot = env.scene[env_extra_info.robot_name]
+
+        object_pose_in_env = env.scene[target_object].data.root_pose_w
+        object_pos_in_env, object_quat_in_env = object_pose_in_env[:, :3], object_pose_in_env[:, 3:]
+
+        robot_base_link_idx = robot.body_names.index(env_extra_info.robot_base_link_name)
+        robot_base_pose_in_env = robot.data.body_link_pose_w[:, robot_base_link_idx]
+        robot_base_pos_in_env, robot_base_quat_in_env = robot_base_pose_in_env[:, :3], robot_base_pose_in_env[:, 3:]
+
+        robot_base_pos_in_object, _ = PoseUtils.subtract_frame_transforms(
+            object_pos_in_env, object_quat_in_env, robot_base_pos_in_env, robot_base_quat_in_env
+        )
+
+        min_distance = float("inf")
+        nearest_reach_target_pose = None
+        for reach_target_pose_in_object in env_extra_info.object_reach_target_poses[target_object]:
+            reach_target_pose_in_object = torch.as_tensor(reach_target_pose_in_object, device=env.device)
+            reach_target_pos_in_object = reach_target_pose_in_object[None, :3]
+
+            distance = torch.linalg.norm(robot_base_pos_in_object - reach_target_pos_in_object, dim=-1).item()
+            if distance < min_distance:
+                min_distance = distance
+                nearest_reach_target_pose = reach_target_pose_in_object
+        reach_target_pose_in_object = nearest_reach_target_pose.unsqueeze(0)
+        reach_target_pos_in_object, reach_target_quat_in_object = (
+            reach_target_pose_in_object[:, :3],
+            reach_target_pose_in_object[:, 3:],
+        )
+
+        reach_target_pos_in_env, reach_target_quat_in_env = PoseUtils.combine_frame_transforms(
+            object_pos_in_env, object_quat_in_env, reach_target_pos_in_object, reach_target_quat_in_object
+        )
+
+        robot_root_pose_in_env = robot.data.root_pose_w
+        robot_root_pos_in_env, robot_root_quat_in_env = robot_root_pose_in_env[:, :3], robot_root_pose_in_env[:, 3:]
+
+        reach_target_pos_in_robot_root, reach_target_quat_in_robot_root = PoseUtils.subtract_frame_transforms(
+            robot_root_pos_in_env, robot_root_quat_in_env, reach_target_pos_in_env, reach_target_quat_in_env
+        )
+
+        target_pose = torch.cat((reach_target_pos_in_robot_root, reach_target_quat_in_robot_root), dim=-1).squeeze(0)
+
+        return SkillGoal(target_object=target_object, target_pose=target_pose)
+
+    def execute_plan(self, state: WorldState, goal: SkillGoal) -> bool:
+        """Execute the plan of the reach skill."""
+
+        target_pose = goal.target_pose  # target pose in the robot root frame
+        target_pos, target_quat = target_pose[:3], target_pose[3:]
+
+        full_sim_joint_names = state.sim_joint_names
+        full_sim_q = state.robot_joint_pos
+        full_sim_qd = state.robot_joint_vel
+        planner_activate_joints = self._planner.target_joint_names
+
+        activate_q, activate_qd = [], []
+        for joint_name in planner_activate_joints:
+            if joint_name in full_sim_joint_names:
+                activate_q.append(full_sim_q[full_sim_joint_names.index(joint_name)])
+                activate_qd.append(full_sim_qd[full_sim_joint_names.index(joint_name)])
+            else:
+                raise ValueError(
+                    f"Joint {joint_name} in planner activate joints is not in the full simulation joint names."
+                )
+        activate_q = torch.stack(activate_q, dim=0)
+        activate_qd = torch.stack(activate_qd, dim=0)
+        self._trajectory = self._planner.plan_motion(
+            target_pos,
+            target_quat,
+            activate_q,
+            activate_qd,
+        )
+
+        return self._trajectory is not None
 
     def step(self, state: WorldState) -> SkillOutput:
-        return SkillOutput(action=torch.zeros(6), done=True, success=True)
+        """Step the reach skill.
+
+        Args:
+            state: The current state of the world.
+
+        Returns:
+            The output of the skill execution.
+                action: The action to be applied to the environment. [joint_positions with isaaclab joint order]
+        """
+
+        traj_positions = self._trajectory.position
+        if self._step_idx >= len(self._trajectory.position):
+            traj_pos = traj_positions[-1]
+            done = True
+        else:
+            traj_pos = traj_positions[self._step_idx]
+            done = False
+            self._step_idx += 1
+
+        curobo_joint_names = self._trajectory.joint_names
+        sim_joint_names = state.sim_joint_names
+        joint_pos = state.robot_joint_pos.clone()
+        for curobo_idx, curobo_joint_name in enumerate(curobo_joint_names):
+            sim_idx = sim_joint_names.index(curobo_joint_name)
+            joint_pos[sim_idx] = traj_pos[curobo_idx]
+
+        return SkillOutput(
+            action=joint_pos,
+            done=done,
+            success=True,
+            info={},
+        )
+
+    def reset(self) -> None:
+        """Reset the reach skill."""
+
+        super().reset()
+        self._step_idx = 0
+        self._trajectory = None
