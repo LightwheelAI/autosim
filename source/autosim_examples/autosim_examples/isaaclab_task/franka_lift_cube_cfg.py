@@ -8,6 +8,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import FrameTransformerCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils import configclass
@@ -22,6 +23,14 @@ class FrankaCubeLiftSceneCfg(InteractiveSceneCfg):
     """Configuration for the Franka cube lift scene."""
 
     robot: ArticulationCfg = FRANKA_PANDA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+    ee_frame: FrameTransformerCfg = FrameTransformerCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/panda_link0",
+        debug_vis=False,
+        target_frames=[
+            FrameTransformerCfg.FrameCfg(prim_path="{ENV_REGEX_NS}/Robot/panda_hand", name="panda_hand"),
+        ],
+    )
 
     # table
     table = AssetBaseCfg(
@@ -60,6 +69,9 @@ class FrankaCubeLiftSceneCfg(InteractiveSceneCfg):
         prim_path="/World/light",
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
     )
+
+    def __post_init__(self):
+        self.ee_frame.visualizer_cfg.markers["frame"].scale = (0.10, 0.10, 0.10)
 
 
 @configclass
@@ -158,6 +170,8 @@ class FrankaCubeLiftEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     # Events settings
     events: EventCfg = EventCfg()
+
+    rewards = None
 
     def __post_init__(self):
         """Post initialization."""
