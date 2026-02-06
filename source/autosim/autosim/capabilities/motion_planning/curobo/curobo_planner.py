@@ -12,6 +12,7 @@ from curobo.types.math import Pose
 from curobo.types.state import JointState
 from curobo.util.logger import setup_curobo_logger
 from curobo.util.usd_helper import UsdHelper
+from curobo.util_file import get_assets_path, get_configs_path
 from curobo.wrap.reacher.motion_gen import (
     MotionGen,
     MotionGenConfig,
@@ -120,14 +121,17 @@ class CuroboPlanner:
         if isinstance(self.cfg.robot_config_file, str):
             self._logger.info(f"Loading robot configuration from {self.cfg.robot_config_file}")
 
+            curobo_config_path = self.cfg.curobo_config_path or get_configs_path()
+            curobo_asset_path = self.cfg.curobo_asset_path or get_assets_path()
+
             content_path = ContentPath(
-                robot_config_root_path=self.cfg.curobo_config_path,
-                robot_urdf_root_path=self.cfg.curobo_asset_path,
-                robot_asset_root_path=self.cfg.curobo_asset_path,
+                robot_config_root_path=curobo_config_path,
+                robot_urdf_root_path=curobo_asset_path,
+                robot_asset_root_path=curobo_asset_path,
                 robot_config_file=self.cfg.robot_config_file,
             )
             robot_cfg = load_robot_yaml(content_path)
-            robot_cfg["robot_cfg"]["kinematics"]["external_asset_path"] = self.cfg.curobo_asset_path
+            robot_cfg["robot_cfg"]["kinematics"]["external_asset_path"] = curobo_asset_path
 
             return robot_cfg
         else:
