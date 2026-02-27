@@ -1,3 +1,4 @@
+import isaaclab.utils.math as PoseUtils
 import torch
 from isaaclab.envs import ManagerBasedEnv
 from isaaclab.utils import configclass
@@ -23,7 +24,7 @@ class RelativeReachSkillExtraCfg(CuroboSkillExtraCfg):
     move_offset: float = 0.1
     """The offset to move the end-effector."""
     move_axis: str = "+z"
-    """The axis to move the end-effector, which is in the robot root frame. e.g. "+x", "+y", "+z", "-x", "-y", "-z"."""
+    """The axis to move the end-effector, which is in the eef frame. e.g. "+x", "+y", "+z", "-x", "-y", "-z"."""
 
     def __post_init__(self):
         """Post-initialize the relative reach skill extra configuration."""
@@ -83,9 +84,21 @@ class RelativeReachSkill(ReachSkill):
         activate_qd = torch.stack(activate_qd, dim=0)
 
         ee_pose = self._planner.get_ee_pose(activate_q)
-        target_pos, target_quat = ee_pose.position.squeeze(0).clone(), ee_pose.quaternion.squeeze(0).clone()
-        # move the end-effector along the move axis by the move offset, target pos is in the robot root frame
-        target_pos += self.cfg.extra_cfg._move_offset_vector.to(target_pos.device)
+        target_pos, target_quat = ee_pose.position.clone(), ee_pose.quaternion.clone()
+
+        # move the eef along the move axis by the move offset based on eef frame, and convert to robot root frame to get target pose
+        isaaclab_device = state.device
+        offset_pos_in_ee = self.cfg.extra_cfg._move_offset_vector.to(isaaclab_device).unsqueeze(0)
+        offset_quat_in_ee = torch.tensor([1.0, 0.0, 0.0, 0.0], device=isaaclab_device).unsqueeze(0)
+        ee_pos_in_robot_root, ee_quat_in_robot_root = target_pos.to(isaaclab_device), target_quat.to(isaaclab_device)
+
+        offset_pos_in_robot_root, offset_quat_in_robot_root = PoseUtils.combine_frame_transforms(
+            ee_pos_in_robot_root, ee_quat_in_robot_root, offset_pos_in_ee, offset_quat_in_ee
+        )
+
+        planner_device = self._planner.tensor_args.device
+        target_pos = offset_pos_in_robot_root.to(planner_device).squeeze(0)
+        target_quat = offset_quat_in_robot_root.to(planner_device).squeeze(0)
 
         self._trajectory = self._planner.plan_motion(
             target_pos,

@@ -172,9 +172,9 @@ class FixtureInfo:
     """The name of the fixture."""
     type: str
     """The type of the fixture."""
-    interactive: bool
+    interactive: bool | None = None
     """Whether the fixture is interactive."""
-    interaction_type: str
+    interaction_type: str | None = None
     """The type of interaction with the fixture."""
 
 

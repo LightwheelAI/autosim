@@ -150,7 +150,7 @@ class CuroboPlanner:
         env_prim_path = f"/World/envs/env_{self._env_id}"
         robot_prim_path = self.cfg.robot_prim_path or f"{env_prim_path}/Robot"
 
-        only_paths = [f"{env_prim_path}/{sub}" for sub in self.cfg.world_only_subffixes] or [env_prim_path]
+        only_paths = [f"{env_prim_path}/{sub}" for sub in self.cfg.world_only_subffixes]
 
         ignore_list = [f"{env_prim_path}/{sub}" for sub in self.cfg.world_ignore_subffixes] or [
             f"{env_prim_path}/target",
