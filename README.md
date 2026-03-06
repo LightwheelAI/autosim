@@ -1,39 +1,41 @@
-# autosim
+# AutoDataGen
 
-**autosim: An automated data generation pipeline based on NVIDIA Isaac Lab**
+**AutoDataGen: An automated data generation pipeline based on NVIDIA Isaac Lab**
 
-An automatic simulation data generation pipeline built on Isaac Lab, integrating LLM-based task decomposition, motion planning, and navigation capabilities.
+An automated simulation data generation pipeline built on Isaac Lab, integrating LLM-based task decomposition, motion planning, and navigation capabilities.
 
 ## Overview
 
-`autosim` provides an extensible automated data generation pipeline for NVIDIA Isaac Lab environments:
+`AutoDataGen` provides an extensible automated data generation pipeline for NVIDIA Isaac Lab environments:
 
 - Starting from **task code and scene information**, it uses an LLM to **decompose high-level tasks** automatically.
 - Maps the decomposition result into a sequence of **atomic skills**.
 - Invokes **motion planning (based on cuRobo)** and **navigation** to execute these skills in simulation.
 - Produces unified **action sequences / trajectory data** for downstream robot learning and research.
 
-> In short: `autosim` helps you automatically turn “a task in Isaac Lab” into an executable sequence of skills, and generates data that can be used for training or evaluation.
+> In short: `AutoDataGen` helps you automatically turn “a task in Isaac Lab” into an executable sequence of skills, and generates data that can be used for training or evaluation.
 
 ## Installation
 
-Below is a typical setup workflow. `autosim` can be installed as a submodule inside an environment that already contains Isaac Lab.
+Below is a typical setup workflow.
+
+> AutoDataGen uses `autosim` as a Python package to organize the code. `autosim` can be installed as a submodule within an environment that already includes Isaac Lab.
 
 ```bash
-conda create -n autosim python=3.11
+conda create -n AutoDataGen python=3.11
 
-conda activate autosim
+conda activate AutoDataGen
 
-git clone https://github.com/LightwheelAI/autosim.git
+git clone https://github.com/LightwheelAI/AutoDataGen.git
 
-cd autosim
+cd AutoDataGen
 
 git submodule update --init --recursive
 ```
 
 ### IsaacLab Installation
 
-`autosim` depends on Isaac Lab. You can follow the official installation guide [here](https://isaac-sim.github.io/IsaacLab/v2.2.1/source/setup/installation/pip_installation.html), or use the commands below. If you already have an environment with Isaac Lab installed, you can reuse it and skip this step.
+`AutoDataGen` depends on Isaac Lab. You can follow the official installation guide [here](https://isaac-sim.github.io/IsaacLab/v2.2.1/source/setup/installation/pip_installation.html), or use the commands below. If you already have an environment with Isaac Lab installed, you can reuse it and skip this step.
 
 ```bash
 # Install CUDA toolkit
@@ -80,7 +82,7 @@ pip install -e source/autosim
 
 After completing the installation and configuration steps above, you can directly run the built-in example.
 
-First, install the `autosim` example package:
+First, install the `autosim_examples` package:
 
 ```bash
 pip install -e source/autosim_examples
@@ -113,7 +115,7 @@ For a task that has already been defined in Isaac Lab, you can use `autosim` to 
 
    Inherit from `AutoSimPipeline` and implement:
 
-   - `load_env(self) -> ManagerBasedEnv`: load the environment based on Isaac Lab / Gymnasium; this environment should correspond to the pre-defined Task.
+   - `load_env(self) -> ManagerBasedEnv`: load the environment using Isaac Lab; this environment should correspond to the pre-defined task.
    - `get_env_extra_info(self) -> EnvExtraInfo`: provide the task name, robot name, end-effector link, and reach targets expressed as poses relative to objects, etc.
 
 3. **Register the pipeline in the package’s `__init__.py`**
@@ -140,6 +142,23 @@ For a task that has already been defined in Isaac Lab, you can use `autosim` to 
    ```
 
 > You can refer to `source/autosim_examples/autosim_examples/autosim/pipelines/franka_lift_cube.py` for a minimal working example.
+
+## Using with LW-BenchHub
+
+[LW-BenchHub](https://github.com/LightwheelAI/LW-BenchHub) includes several usage examples of AutoDataGen. You can try them by following the steps below.
+
+First, set up the LW-BenchHub environment according to its [documentation](https://docs.lightwheel.net/lw_benchhub/usage/Installation), and then install `autosim` into that environment. Since Isaac Lab has already been installed in the previous step, you only need to complete the **cuRobo Installation** and **autosim Installation** steps above.
+
+Then you can launch it with:
+
+```bash
+cd lw_benchhub
+
+python scripts/autosim/run_autosim_example.py --pipeline_id=LWBenchhub-Autosim-CoffeeSetupMugPipeline-v0
+```
+
+We also support tasks such as CheesyBread, CloseOven, OpenFridge, and KettleBoiling. You can find the corresponding [implementations](https://github.com/LightwheelAI/LW-BenchHub/tree/main/lw_benchhub/autosim) in LW-BenchHub.
+
 
 ## Contributing
 
