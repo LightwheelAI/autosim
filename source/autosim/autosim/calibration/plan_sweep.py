@@ -27,6 +27,11 @@ def _tensor_to_list(x: torch.Tensor) -> list[float]:
     return [float(v) for v in x.detach().cpu().flatten().tolist()]
 
 
+def _fmt_pose(vals: list[float]) -> str:
+    """Format a 7-value pose as a Python list literal, ready to copy-paste into code."""
+    return "[" + ", ".join(f"{v:.4f}" for v in vals) + "]"
+
+
 def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[dict[str, Any]]:
     """
     Execute the pipeline step by step. When the reach_skill_index-th reach skill
@@ -232,17 +237,21 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
     top_k = sorted(rows, key=_sort_key)[: cfg.top_k]
 
     success_count = int(success.sum().item())
-    print(
-        f"[reach_plan_sweep] object='{obj_name}' reach_skill_index={cfg.reach_skill_index} "
-        f"success={success_count}/{k} ({success_count / k:.1%}) time={dt_ms:.0f}ms"
-    )
-    print(f"[reach_plan_sweep] top {len(top_k)} poses (object frame):")
+    _SEP = "─" * 80
+    print(_SEP)
+    print(f"  reach_plan_sweep  │  object='{obj_name}'  reach_skill_index={cfg.reach_skill_index}")
+    print(f"  success  {success_count}/{k} ({success_count / k:.1%})  │  time  {dt_ms:.0f} ms")
+    print(_SEP)
+    print(f"  top {len(top_k)} poses  (object frame  [x, y, z, qw, qx, qy, qz])")
+    print()
     for rank, r in enumerate(top_k):
-        pose_str = ", ".join(f"{v:.4f}" for v in r["pose_oe"])
-        extra_strs = "".join(
-            f"\n       {ee}: [{', '.join(f'{v:.4f}' for v in r[f'extra_pose_oe/{ee}'])}]" for ee in extra_poses_oe_dict
-        )
-        extras = f"traj_len={r['traj_len']}" if r["traj_len"] is not None else f"pos_err={r['position_error']:.4f}"
-        print(f"  [{rank}] [{pose_str}]{extra_strs}  {extras}")
+        mark = "✓" if r["plan_success"] else "✗"
+        metric = f"traj_len={r['traj_len']}" if r["traj_len"] is not None else f"pos_err={r['position_error']:.4f}"
+        print(f"  [{rank}] {mark}  {_fmt_pose(r['pose_oe'])}  # {metric}")
+        for ee in extra_poses_oe_dict:
+            print(f"          {ee}: {_fmt_pose(r[f'extra_pose_oe/{ee}'])}")
+        if extra_poses_oe_dict:
+            print()
+    print(_SEP)
 
     return top_k
