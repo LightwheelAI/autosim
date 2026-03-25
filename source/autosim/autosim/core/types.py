@@ -89,6 +89,10 @@ class EnvExtraInfo:
     """The extra reach target poses in the objects frame. each object can have a list of extra reach target poses [x, y, z, qw, qx, qy, qz] with ee_name as the key in the order of execution."""
 
     def __post_init__(self):
+        self.reset_target_pose_iterators()
+
+    def reset_target_pose_iterators(self) -> None:
+        """Reset internal iterators so target poses are consumed from the start."""
         self._object_reach_target_poses_iterator_dict = {
             object_name: self._build_iterator(reach_target_poses)
             for object_name, reach_target_poses in self.object_reach_target_poses.items()
