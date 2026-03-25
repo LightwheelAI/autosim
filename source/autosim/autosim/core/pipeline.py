@@ -129,7 +129,7 @@ class AutoSimPipeline(ABC):
         """Reset the environment."""
 
         self._env.reset()
-        self._env_extra_info.reset_target_pose_iterators()
+        self._env_extra_info.reset()
 
     def decompose(self) -> DecomposeResult:
         """Decompose the task."""
