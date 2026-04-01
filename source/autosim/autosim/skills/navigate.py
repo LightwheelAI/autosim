@@ -16,6 +16,7 @@ from autosim.core.types import (
     SkillOutput,
     WorldState,
 )
+from autosim.utils.debug_util import debug_visualize_goal_sampling
 
 
 @configclass
@@ -95,6 +96,7 @@ class NavigateSkill(Skill):
 
         angles = np.linspace(0, 2 * np.pi, self.cfg.extra_cfg.num_samples, endpoint=False)
 
+        target_pos_candidate = None
         for angle in angles:
             # calculate the sample point coordinates in the world frame
             cx = obj_pos_w[0] + self.cfg.extra_cfg.sampling_radius * np.cos(angle)
@@ -120,6 +122,19 @@ class NavigateSkill(Skill):
                         dx = obj_pos_w[0] - cx
                         dy = obj_pos_w[1] - cy
                         target_yaw = np.arctan2(dy, dx)
+
+        if self._logger.is_debug_enabled:
+            # debug visualization of map / object / robot / sampling around the object
+            robot_pos_w = env.scene["robot"].data.root_pos_w[0].cpu().numpy()
+
+            debug_visualize_goal_sampling(
+                occupancy_map=self._occupancy_map,
+                obj_pos_w=obj_pos_w,
+                robot_pos_w=robot_pos_w,
+                sampling_radius=self.cfg.extra_cfg.sampling_radius,
+                num_samples=self.cfg.extra_cfg.num_samples,
+                target_pos_candidate=target_pos_candidate,
+            )
 
         # if no target position is found, use the default fallback position
         if target_pos_candidate is None:
