@@ -156,23 +156,26 @@ def debug_visualize_goal_sampling(
             occ_x.append(gx)
             occ_y.append(gy)
 
-    plt.figure("NavigateSkill Goal Sampling", figsize=(6, 6))
-    plt.imshow(occ, origin="lower", cmap="gray_r", interpolation="nearest")
+    # Reuse the same window across calls and clear it to avoid drawing overlaps.
+    fig = plt.figure("NavigateSkill Goal Sampling", figsize=(6, 6))
+    fig.clear()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.imshow(occ, origin="lower", cmap="gray_r", interpolation="nearest")
 
     # object
     if 0 <= ogy < occ.shape[0] and 0 <= ogx < occ.shape[1]:
-        plt.scatter(ogx, ogy, c="red", marker="*", s=80, label="object")
+        ax.scatter(ogx, ogy, c="red", marker="*", s=80, label="object")
 
     # robot position
     if rgx is not None and rgy is not None:
         if 0 <= rgy < occ.shape[0] and 0 <= rgx < occ.shape[1]:
-            plt.scatter(rgx, rgy, c="blue", marker="o", s=60, label="robot")
+            ax.scatter(rgx, rgy, c="blue", marker="o", s=60, label="robot")
 
     # sampling points (free = green points, occupied/out = red crosses)
     if free_x:
-        plt.scatter(free_x, free_y, c="green", s=30, label="free samples")
+        ax.scatter(free_x, free_y, c="green", s=30, label="free samples")
     if occ_x:
-        plt.scatter(occ_x, occ_y, c="red", marker="x", s=30, label="occupied / oob samples")
+        ax.scatter(occ_x, occ_y, c="red", marker="x", s=30, label="occupied / oob samples")
 
     # final chosen candidate (if any)
     if target_pos_candidate is not None:
@@ -181,12 +184,12 @@ def debug_visualize_goal_sampling(
         cgx = int((cx - origin_x) / resolution)
         cgy = int((cy - origin_y) / resolution)
         if 0 <= cgy < occ.shape[0] and 0 <= cgx < occ.shape[1]:
-            plt.scatter(cgx, cgy, c="yellow", edgecolors="black", s=80, label="chosen candidate")
+            ax.scatter(cgx, cgy, c="yellow", edgecolors="black", s=80, label="chosen candidate")
 
-    plt.title("Goal Sampling around Object")
-    plt.xlabel("x (grid index)")
-    plt.ylabel("y (grid index)")
-    plt.legend(loc="upper right")
-    plt.tight_layout()
-    plt.show(block=False)
+    ax.set_title("Goal Sampling around Object")
+    ax.set_xlabel("x (grid index)")
+    ax.set_ylabel("y (grid index)")
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.show()
     plt.pause(0.001)

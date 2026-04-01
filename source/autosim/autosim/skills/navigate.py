@@ -123,19 +123,6 @@ class NavigateSkill(Skill):
                         dy = obj_pos_w[1] - cy
                         target_yaw = np.arctan2(dy, dx)
 
-        if self._logger.is_debug_enabled:
-            # debug visualization of map / object / robot / sampling around the object
-            robot_pos_w = env.scene["robot"].data.root_pos_w[0].cpu().numpy()
-
-            debug_visualize_goal_sampling(
-                occupancy_map=self._occupancy_map,
-                obj_pos_w=obj_pos_w,
-                robot_pos_w=robot_pos_w,
-                sampling_radius=self.cfg.extra_cfg.sampling_radius,
-                num_samples=self.cfg.extra_cfg.num_samples,
-                target_pos_candidate=target_pos_candidate,
-            )
-
         # if no target position is found, use the default fallback position
         if target_pos_candidate is None:
             self._logger.warning(f"Map sampling failed for {target_object_name}. Using default offset.")
@@ -173,6 +160,21 @@ class NavigateSkill(Skill):
             f"Planning from ({start_pos[0]:.2f}, {start_pos[1]:.2f}) to ({goal_pos[0]:.2f}, {goal_pos[1]:.2f}),"
             f" target_yaw={target_yaw:.2f}."
         )
+        if self._logger.is_debug_enabled:
+            # debug visualization of map / object / robot / sampling around the object
+            obj_tensor = state.objects[self._target_object_name]  # [x, y, z, qw, qx, qy, qz]
+            obj_pos_w = obj_tensor[:3].detach().cpu().numpy()
+            robot_pos_w = state.robot_base_pose.detach().cpu().numpy()
+            target_pos_candidate = goal_pos.detach().cpu().numpy()
+
+            debug_visualize_goal_sampling(
+                occupancy_map=self._occupancy_map,
+                obj_pos_w=obj_pos_w,
+                robot_pos_w=robot_pos_w,
+                sampling_radius=self.cfg.extra_cfg.sampling_radius,
+                num_samples=self.cfg.extra_cfg.num_samples,
+                target_pos_candidate=target_pos_candidate,
+            )
 
         self._global_path = self._global_planner.plan(start_pos, goal_pos)
 
