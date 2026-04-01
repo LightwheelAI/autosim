@@ -192,4 +192,8 @@ def debug_visualize_goal_sampling(
     ax.legend(loc="upper right")
     fig.tight_layout()
     fig.show()
-    plt.pause(0.001)
+    # Let the GUI event loop process draw/update events even if the main thread
+    # quickly goes back to heavy simulation work.
+    fig.canvas.draw_idle()
+    fig.canvas.flush_events()
+    plt.pause(0.02)
