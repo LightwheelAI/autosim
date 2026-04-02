@@ -74,6 +74,9 @@ class NavigateSkill(Skill):
         self._global_path = None
         self._current_waypoint_idx = 0
 
+        # variables for debug
+        self._sample_range = None
+
     def extract_goal_from_info(
         self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
     ) -> SkillGoal:
@@ -85,6 +88,7 @@ class NavigateSkill(Skill):
         target_object = env.scene[target_object_name]
 
         obj_pos_w = target_object.data.root_pos_w[0].cpu().numpy()
+        self._logger.info(f"Object pose in world frame: {target_object.data.root_pose_w[0]}")
 
         is_free = (self._occupancy_map.occupancy_map == 0).cpu().numpy()
         if np.any(is_free):
@@ -94,7 +98,9 @@ class NavigateSkill(Skill):
 
         best_score = -1.0
 
-        angles = np.linspace(0, 2 * np.pi, self.cfg.extra_cfg.num_samples, endpoint=False)
+        sample_range = env_extra_info.get_navigate_sample_range(target_object_name)
+        self._sample_range = sample_range
+        angles = np.linspace(sample_range[0], sample_range[1], self.cfg.extra_cfg.num_samples, endpoint=False)
 
         target_pos_candidate = None
         for angle in angles:
@@ -171,6 +177,7 @@ class NavigateSkill(Skill):
                 occupancy_map=self._occupancy_map,
                 obj_pos_w=obj_pos_w,
                 robot_pos_w=robot_pos_w,
+                sample_range=self._sample_range,
                 sampling_radius=self.cfg.extra_cfg.sampling_radius,
                 num_samples=self.cfg.extra_cfg.num_samples,
                 target_pos_candidate=target_pos_candidate,

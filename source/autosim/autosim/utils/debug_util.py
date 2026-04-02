@@ -90,6 +90,7 @@ def debug_visualize_goal_sampling(
     occupancy_map: OccupancyMap,
     obj_pos_w: np.ndarray,
     robot_pos_w: np.ndarray | None,
+    sample_range: tuple[float, float],
     sampling_radius: float,
     num_samples: int,
     target_pos_candidate: np.ndarray | None,
@@ -100,6 +101,7 @@ def debug_visualize_goal_sampling(
         occupancy_map: The occupancy map of the environment.
         obj_pos_w: The position of the object in the world frame.
         robot_pos_w: The position of the robot in the world frame.
+        sample_range: The range of the sampling angles.
         sampling_radius: The radius of the sampling.
         num_samples: The number of samples.
         target_pos_candidate: The candidate position of the target.
@@ -132,7 +134,7 @@ def debug_visualize_goal_sampling(
         rgy = int((ry - origin_y) / resolution)
 
     # sampling angles
-    angles = np.linspace(0, 2 * np.pi, num_samples, endpoint=False)
+    angles = np.linspace(sample_range[0], sample_range[1], num_samples, endpoint=False)
 
     free_x, free_y = [], []
     occ_x, occ_y = [], []
