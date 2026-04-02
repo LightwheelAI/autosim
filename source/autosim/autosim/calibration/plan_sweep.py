@@ -64,6 +64,8 @@ def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[
     """
 
     # modified from pipeline.run() to only execute the reach skill at the specified index
+    pipeline.initialize()
+
     decompose_result = pipeline.decompose()
     pipeline._check_skill_extra_cfg()
     pipeline.reset_env()
