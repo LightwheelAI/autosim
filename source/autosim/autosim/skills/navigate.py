@@ -16,6 +16,7 @@ from autosim.core.types import (
     SkillOutput,
     WorldState,
 )
+from autosim.utils.debug_util import debug_visualize_goal_sampling
 
 
 @configclass
@@ -73,6 +74,9 @@ class NavigateSkill(Skill):
         self._global_path = None
         self._current_waypoint_idx = 0
 
+        # variables for debug
+        self._sample_range = None
+
     def extract_goal_from_info(
         self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
     ) -> SkillGoal:
@@ -84,6 +88,7 @@ class NavigateSkill(Skill):
         target_object = env.scene[target_object_name]
 
         obj_pos_w = target_object.data.root_pos_w[0].cpu().numpy()
+        self._logger.info(f"Object pose in world frame: {target_object.data.root_pose_w[0]}")
 
         is_free = (self._occupancy_map.occupancy_map == 0).cpu().numpy()
         if np.any(is_free):
@@ -93,8 +98,11 @@ class NavigateSkill(Skill):
 
         best_score = -1.0
 
-        angles = np.linspace(0, 2 * np.pi, self.cfg.extra_cfg.num_samples, endpoint=False)
+        sample_range = env_extra_info.get_navigate_sample_range(target_object_name)
+        self._sample_range = sample_range
+        angles = np.linspace(sample_range[0], sample_range[1], self.cfg.extra_cfg.num_samples, endpoint=False)
 
+        target_pos_candidate = None
         for angle in angles:
             # calculate the sample point coordinates in the world frame
             cx = obj_pos_w[0] + self.cfg.extra_cfg.sampling_radius * np.cos(angle)
@@ -158,6 +166,22 @@ class NavigateSkill(Skill):
             f"Planning from ({start_pos[0]:.2f}, {start_pos[1]:.2f}) to ({goal_pos[0]:.2f}, {goal_pos[1]:.2f}),"
             f" target_yaw={target_yaw:.2f}."
         )
+        if self._logger.is_debug_enabled:
+            # debug visualization of map / object / robot / sampling around the object
+            obj_tensor = state.objects[self._target_object_name]  # [x, y, z, qw, qx, qy, qz]
+            obj_pos_w = obj_tensor[:3].detach().cpu().numpy()
+            robot_pos_w = state.robot_base_pose.detach().cpu().numpy()
+            target_pos_candidate = goal_pos.detach().cpu().numpy()
+
+            debug_visualize_goal_sampling(
+                occupancy_map=self._occupancy_map,
+                obj_pos_w=obj_pos_w,
+                robot_pos_w=robot_pos_w,
+                sample_range=self._sample_range,
+                sampling_radius=self.cfg.extra_cfg.sampling_radius,
+                num_samples=self.cfg.extra_cfg.num_samples,
+                target_pos_candidate=target_pos_candidate,
+            )
 
         self._global_path = self._global_planner.plan(start_pos, goal_pos)
 

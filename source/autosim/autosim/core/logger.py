@@ -22,6 +22,10 @@ class AutoSimLogger:
             self._logger.propagate = False
         return self._logger
 
+    @property
+    def is_debug_enabled(self):
+        return self._level == logging.DEBUG
+
     def debug(self, msg, *args, **kwargs):
         self.logger.debug(msg, *args, **kwargs)
 
