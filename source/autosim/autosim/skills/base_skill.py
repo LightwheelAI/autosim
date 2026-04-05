@@ -88,6 +88,10 @@ class CuroboSkillExtraCfg(SkillExtraCfg):
     debug_target_pose: bool = False
     """Whether to debug the target pose."""
 
+    corrective_reach: bool = False
+    """If True, after the first reach trajectory completes, re-plan a second reach using the
+    object's actual current position. Useful when the robot nudges the object during approach."""
+
 
 class CuroboSkillBase(Skill):
     """Base class for skills dependent on curobo."""
