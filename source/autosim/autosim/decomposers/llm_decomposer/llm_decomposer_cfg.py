@@ -30,6 +30,9 @@ class LLMDecomposerCfg(DecomposerCfg):
     max_tokens: int = 4000
     """The maximum number of tokens to generate."""
 
+    max_decompose_retries: int = 3
+    """Maximum number of retries if decomposition fails (JSON parse error or validation error)."""
+
     def __post_init__(self) -> None:
         super().__post_init__()
         api_key = os.environ.get("AUTOSIM_LLM_API_KEY")

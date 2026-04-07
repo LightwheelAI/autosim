@@ -83,19 +83,26 @@ class LLMDecomposer(Decomposer):
         prompt = self._build_prompt(task_code, extra_info)
         self._logger.debug(f"prompt for llm composer: \n{prompt}")
 
-        self._logger.info("generate response from llm...")
-        response = self._llm_backend.generate(
-            prompt=prompt, temperature=self.cfg.temperature, max_tokens=self.cfg.max_tokens
-        )
+        max_retries = self.cfg.max_decompose_retries
+        last_error: Exception | None = None
 
-        # parse json response
-        try:
-            results = self._extract_json(response)
-            self._validate_result(results)
+        for attempt in range(1, max_retries + 1):
+            self._logger.info(f"generate response from llm (attempt {attempt}/{max_retries})...")
+            response = self._llm_backend.generate(
+                prompt=prompt, temperature=self.cfg.temperature, max_tokens=self.cfg.max_tokens
+            )
 
-            return from_dict(DecomposeResult, results)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse JSON response: {e}\nResponse: {response}")
+            try:
+                results = self._extract_json(response)
+                self._validate_result(results)
+                return from_dict(DecomposeResult, results)
+            except (json.JSONDecodeError, ValueError) as e:
+                last_error = e
+                self._logger.warning(f"Decomposition attempt {attempt} failed: {e}")
+                if attempt < max_retries:
+                    self._logger.info("Retrying...")
+
+        raise ValueError(f"Decomposition failed after {max_retries} attempts. Last error: {last_error}")
 
     def _load_task_code(self, task_name: str) -> str:
         """
