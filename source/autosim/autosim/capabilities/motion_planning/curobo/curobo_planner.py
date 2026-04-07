@@ -324,6 +324,13 @@ class CuroboPlanner:
             current_q = current_q[:dof_needed]
             current_qd = current_qd[:dof_needed]
 
+        # Clamp start state to joint limits to avoid INVALID_START_STATE_JOINT_LIMITS.
+        # joint_limits.position shape: [2, n_joints], row 0 = lower, row 1 = upper.
+        joint_limits = self.motion_gen.kinematics.get_joint_limits()
+        q_lo = joint_limits.position[0]
+        q_hi = joint_limits.position[1]
+        current_q = torch.clamp(self._to_curobo_device(current_q), q_lo, q_hi).to(current_q.device)
+
         # build the target pose
         goal = Pose(
             position=self._to_curobo_device(target_pos),
