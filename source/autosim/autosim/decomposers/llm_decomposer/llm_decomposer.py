@@ -85,6 +85,7 @@ class LLMDecomposer(Decomposer):
 
         max_retries = self.cfg.max_decompose_retries
         last_error: Exception | None = None
+        valid_objects = set(extra_info.objects) if extra_info.objects else None
 
         for attempt in range(1, max_retries + 1):
             self._logger.info(f"generate response from llm (attempt {attempt}/{max_retries})...")
@@ -94,7 +95,7 @@ class LLMDecomposer(Decomposer):
 
             try:
                 results = self._extract_json(response)
-                self._validate_result(results)
+                self._validate_result(results, valid_objects)
                 return from_dict(DecomposeResult, results)
             except (json.JSONDecodeError, ValueError) as e:
                 last_error = e
@@ -209,12 +210,14 @@ class LLMDecomposer(Decomposer):
 
         raise json.JSONDecodeError("No valid JSON found in response", response, 0)
 
-    def _validate_result(self, result: dict) -> None:
+    def _validate_result(self, result: dict, valid_objects: set | None = None) -> None:
         """
         Validate decomposition result structure
 
         Args:
             result: Decomposition result dictionary
+            valid_objects: Set of valid object names from the scene. If provided, target_object
+                fields are checked against this set (skills without a target, e.g. retract, are skipped).
 
         Raises:
             ValueError: If validation fails
@@ -237,8 +240,16 @@ class LLMDecomposer(Decomposer):
             if field not in result:
                 raise ValueError(f"Missing required field: {field}")
 
-        # Validate skill types
+        # Validate skill types and target objects
+        no_target_skills = {"retract"}
         for subtask in result["subtasks"]:
             for skill in subtask["skills"]:
                 if skill["skill_type"] not in self._atomic_skills:
                     raise ValueError(f"Invalid skill type: {skill['skill_type']}. Must be one of {self._atomic_skills}")
+                if valid_objects is not None and skill["skill_type"] not in no_target_skills:
+                    target = skill.get("target_object", "")
+                    if target and target not in valid_objects:
+                        raise ValueError(
+                            f"Invalid target_object '{target}' for skill '{skill['skill_type']}'. "
+                            f"Must be one of: {sorted(valid_objects)}"
+                        )
