@@ -153,10 +153,7 @@ class CuroboPlanner:
     def _initialize_static_world(self) -> None:
         """Initialize static world geometry from USD stage (only called once)."""
 
-        world_cfg = self._build_world_config_from_stage()
-        self._static_world_config = world_cfg
-        self.motion_gen.update_world(world_cfg)
-        self.invalidate_object_mapping_cache()
+        self.refresh_world_from_usd()
 
     def _build_world_config_from_stage(self) -> WorldConfig:
         """Build world obstacle config from current USD stage.
@@ -196,7 +193,7 @@ class CuroboPlanner:
         world_cfg = self._build_world_config_from_stage()
         self.motion_gen.update_world(world_cfg)
         self._static_world_config = world_cfg
-        self.invalidate_object_mapping_cache()
+        self._invalidate_object_mapping_cache()
 
     def _get_object_mappings(self) -> dict[str, str]:
         """Map IsaacLab scene object names to cuRobo world obstacle names."""
@@ -205,9 +202,7 @@ class CuroboPlanner:
             return self._cached_object_mappings
 
         world_model = self.motion_gen.world_coll_checker.world_model
-        rigid_objects = (
-            self._env.scene.rigid_objects if hasattr(self._env.scene, "rigid_objects") else {}
-        )
+        rigid_objects = self._env.scene.rigid_objects
 
         env_prefix = f"/World/envs/env_{self._env_id}/"
         world_object_paths: list[str] = []
@@ -234,12 +229,12 @@ class CuroboPlanner:
         self._logger.debug(f"Object mappings built: {mappings}")
         return mappings
 
-    def invalidate_object_mapping_cache(self) -> None:
+    def _invalidate_object_mapping_cache(self) -> None:
         """Invalidate cached object-name mapping used for dynamic sync."""
 
         self._cached_object_mappings = None
 
-    def sync_dynamic_objects(self) -> int:
+    def _sync_dynamic_objects(self) -> int:
         """Synchronize dynamic object poses into cuRobo world model.
 
         Returns:
@@ -250,15 +245,11 @@ class CuroboPlanner:
         if not object_mappings:
             return 0
 
-        rigid_objects = (
-            self._env.scene.rigid_objects if hasattr(self._env.scene, "rigid_objects") else {}
-        )
+        rigid_objects = self._env.scene.rigid_objects
         env_origin = self._env.scene.env_origins[self._env_id]
 
         updated_count = 0
         for object_name, world_obstacle_name in object_mappings.items():
-            if object_name not in rigid_objects:
-                continue
             try:
                 obj = rigid_objects[object_name]
                 # Convert from world frame to env-local frame, matching how cuRobo world
@@ -309,7 +300,7 @@ class CuroboPlanner:
         if self.cfg.enable_update_world_before_plan:
             self.refresh_world_from_usd()
         elif self.cfg.enable_dynamic_world_sync:
-            self.sync_dynamic_objects()
+            self._sync_dynamic_objects()
 
         if current_qd is None:
             current_qd = torch.zeros_like(current_q)

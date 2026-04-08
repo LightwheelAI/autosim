@@ -18,7 +18,7 @@ class LLMDecomposerCfg(DecomposerCfg):
     api_key: str = MISSING
     """The API key for the LLM."""
 
-    base_url: str = "https://api.chatanywhere.org/v1"  # TODO: change here.
+    base_url: str = "https://api.openai.com/v1"
     """The base URL for the LLM API."""
 
     model: str = "gpt-3.5-turbo"

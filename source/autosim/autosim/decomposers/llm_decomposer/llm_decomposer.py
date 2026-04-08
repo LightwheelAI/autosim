@@ -241,7 +241,7 @@ class LLMDecomposer(Decomposer):
                 raise ValueError(f"Missing required field: {field}")
 
         # Validate skill types and target objects
-        no_target_skills = {"retract"}
+        no_target_skills = {"lift", "push", "pull"}
         for subtask in result["subtasks"]:
             for skill in subtask["skills"]:
                 if skill["skill_type"] not in self._atomic_skills:
