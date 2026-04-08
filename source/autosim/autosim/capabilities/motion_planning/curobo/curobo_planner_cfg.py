@@ -46,9 +46,6 @@ class CuroboPlannerCfg:
     """Maximum number of planning attempts."""
     time_dilation_factor: float = 0.5
     """Time dilation factor for planning."""
-    trajectory_freeze_joints: list[str] | None = None
-    """Joint names whose trajectory values are frozen to their start position after planning.
-    Useful for holding one arm stationary in a dual-arm setup."""
     reach_partial_pose_weight: list[float] | None = None
     """Per-axis weights [rx, ry, rz, px, py, pz] for partial-pose reaching via cuRobo PoseCostMetric.
     Setting a weight to 0.0 relaxes that axis (e.g. [0,0,0,1,1,1] for position-only reaching)."""

@@ -384,17 +384,6 @@ class CuroboPlanner:
             current_plan = result.get_interpolated_plan()
             motion_plan = current_plan.get_ordered_joint_state(self.target_joint_names)
 
-            # Freeze specified joints: override every timestep with the start value so those
-            # joints remain physically stationary throughout the trajectory.
-            if self.cfg.trajectory_freeze_joints:
-                curobo_q = self._to_curobo_device(current_q)
-                for joint_name in self.cfg.trajectory_freeze_joints:
-                    if joint_name in self.target_joint_names:
-                        idx = list(self.target_joint_names).index(joint_name)
-                        motion_plan.position[:, idx] = curobo_q[idx]
-                    else:
-                        self._logger.warning(f"trajectory_freeze_joints: '{joint_name}' not in planner joints, skipped")
-
             self._logger.debug(f"planning succeeded with {len(motion_plan.position)} waypoints")
             return motion_plan
         else:
