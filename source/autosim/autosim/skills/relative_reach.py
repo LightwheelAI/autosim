@@ -67,22 +67,11 @@ class RelativeReachSkill(ReachSkill):
     def execute_plan(self, state: WorldState, goal: SkillGoal) -> bool:
         """Execute the plan of the relative reach skill."""
 
-        full_sim_joint_names = state.sim_joint_names
-        full_sim_q = state.robot_joint_pos
-        full_sim_qd = state.robot_joint_vel
-        planner_activate_joints = self._planner.target_joint_names
-
-        activate_q, activate_qd = [], []
-        for joint_name in planner_activate_joints:
-            if joint_name in full_sim_joint_names:
-                activate_q.append(full_sim_q[full_sim_joint_names.index(joint_name)])
-                activate_qd.append(full_sim_qd[full_sim_joint_names.index(joint_name)])
-            else:
-                raise ValueError(
-                    f"Joint {joint_name} in planner activate joints is not in the full simulation joint names."
-                )
-        activate_q = torch.stack(activate_q, dim=0)
-        activate_qd = torch.stack(activate_qd, dim=0)
+        activate_q, activate_qd = self._build_activate_joint_state(
+            state.sim_joint_names, state.robot_joint_pos, state.robot_joint_vel
+        )
+        if activate_qd is None:
+            raise ValueError("activate_qd should not be None when planning relative reach trajectories.")
 
         ee_pose = self._planner.get_ee_pose(activate_q)
         target_pos, target_quat = ee_pose.position.clone(), ee_pose.quaternion.clone()

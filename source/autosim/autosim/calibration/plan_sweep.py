@@ -32,6 +32,30 @@ def _fmt_pose(vals: list[float]) -> str:
     return "[" + ", ".join(f"{v:.4f}" for v in vals) + "]"
 
 
+def _build_extra_target_link_goals(
+    pipeline: AutoSimPipeline, activate_q: torch.Tensor, batch_size: int
+) -> dict[str, torch.Tensor] | None:
+    """Build batched extra link goals to match live reach execution."""
+    extra_cfg = pipeline.cfg.skills.reach.extra_cfg
+    if extra_cfg.extra_target_mode == "keep_current":
+        return _build_keep_current_extra_target_link_goals(pipeline, activate_q, batch_size)
+    raise ValueError(f"Unsupported extra_target_mode: {extra_cfg.extra_target_mode}")
+
+
+def _build_keep_current_extra_target_link_goals(
+    pipeline: AutoSimPipeline, activate_q: torch.Tensor, batch_size: int
+) -> dict[str, torch.Tensor] | None:
+    extra_target_link_names = pipeline.cfg.skills.reach.extra_cfg.extra_target_link_names
+    if not extra_target_link_names:
+        return None
+
+    current_link_poses = pipeline._motion_planner.get_link_poses(activate_q, extra_target_link_names)
+    return {
+        link_name: torch.cat((pose.position, pose.quaternion), dim=-1).repeat(batch_size, 1)
+        for link_name, pose in current_link_poses.items()
+    }
+
+
 def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[dict[str, Any]]:
     """
     Execute the pipeline step by step. When the reach_skill_index-th reach skill
@@ -41,14 +65,9 @@ def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[
     All skills before the target reach skill are executed normally, so the
     environment reflects the actual state at the point of interest.
 
-    For multi-arm tasks (i.e. when `EnvExtraInfo.object_extra_reach_target_poses` is set),
-    extra EE goals are swept in lock-step with the main EE: both use the same sampled
-    offsets, so the relative configuration between arms is preserved across all candidates.
-
     Returns:
         Top-k result rows sorted by plan quality. Each row contains:
             "pose_oe": list[float]  — main EE pose in object frame [x,y,z,qw,qx,qy,qz]
-            "extra_pose_oe/<ee_name>": list[float]  — extra EE poses (multi-arm only)
             "plan_success": bool
             "traj_len": int | None  — trajectory length (full planning only)
             "position_error": float | None  — IK position error (IK-only mode)
@@ -115,10 +134,9 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
     Core sweep logic. Called once the environment is in the correct pre-reach state.
 
     Samples K candidate poses around the base reach target (object frame), transforms them to
-    robot root frame, then batch-plans with cuRobo. If `object_extra_reach_target_poses` is
-    defined for this object, extra EE goals are sampled with the same offsets (OffsetSampler
-    resets its RNG from `self.seed` on every `sample()` call, so identical offsets are applied
-    to every EE) and passed to the planner as `link_goals`.
+    robot root frame, then batch-plans with cuRobo. When configured, extra link goals are
+    generated from the live joint state using cuRobo FK and held constant across the batch,
+    matching the extra-target strategy used by `ReachSkill.extract_goal_from_info()`.
 
     Args:
         pipeline: The pipeline providing env, planner, and extra info.
@@ -175,35 +193,7 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
     activate_q = torch.stack(activate_q, dim=0)
     activate_qd = torch.stack(activate_qd, dim=0)
 
-    # Build extra EE goals from object_extra_reach_target_poses (multi-arm only).
-    # OffsetSampler.sample() resets its RNG from self.seed on every call, so sample i of any
-    # extra EE receives the same dx/dy/dz/dyaw offset as sample i of the main EE — keeping all
-    # arms coherently displaced across the entire candidate batch.
-    extra_poses_oe_dict: dict[str, torch.Tensor] = {}
-    link_goals: dict[str, torch.Tensor] | None = None
-
-    extra_pose_map = env_extra_info.object_extra_reach_target_poses.get(obj_name, {})
-    if extra_pose_map:
-        extra_link_pos_r: dict[str, torch.Tensor] = {}
-        extra_link_quat_r: dict[str, torch.Tensor] = {}
-        for ee_name, ee_pose_list in extra_pose_map.items():
-            if not (0 <= obj_pose_idx < len(ee_pose_list)):
-                raise ValueError(
-                    f"extra pose index {obj_pose_idx} out of range for '{obj_name}'/'{ee_name}'"
-                    f" ({len(ee_pose_list)} poses)."
-                )
-            ee_base = torch.as_tensor(ee_pose_list[obj_pose_idx], device=env.device, dtype=torch.float32).view(7)
-            ee_poses_oe = cfg.sampling.sample(ee_base)
-            extra_poses_oe_dict[ee_name] = ee_poses_oe
-
-            ee_pos_w, ee_quat_w = PoseUtils.combine_frame_transforms(
-                obj_pos_w, obj_quat_w, ee_poses_oe[:, :3], ee_poses_oe[:, 3:]
-            )
-            ee_pos_r, ee_quat_r = PoseUtils.subtract_frame_transforms(rr_pos_w, rr_quat_w, ee_pos_w, ee_quat_w)
-            extra_link_pos_r[ee_name] = ee_pos_r
-            extra_link_quat_r[ee_name] = ee_quat_r
-
-        link_goals = {ee: torch.cat([extra_link_pos_r[ee], extra_link_quat_r[ee]], dim=-1) for ee in extra_link_pos_r}
+    link_goals = _build_extra_target_link_goals(pipeline, activate_q, k)
 
     # Batch plan
     t0 = time.time()
@@ -225,7 +215,6 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
     for i in range(k):
         rows.append({
             "pose_oe": _tensor_to_list(poses_oe[i]),
-            **{f"extra_pose_oe/{ee}": _tensor_to_list(extra_poses_oe_dict[ee][i]) for ee in extra_poses_oe_dict},
             "plan_success": bool(success[i].item()),
             "traj_len": int(traj_last[i]) if traj_last is not None else None,
             "position_error": float(pos_err[i].item()) if pos_err is not None else None,
@@ -250,10 +239,6 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
         mark = "✓" if r["plan_success"] else "✗"
         metric = f"traj_len={r['traj_len']}" if r["traj_len"] is not None else f"pos_err={r['position_error']:.4f}"
         print(f"  [{rank}] {mark}  {_fmt_pose(r['pose_oe'])}  # {metric}")
-        for ee in extra_poses_oe_dict:
-            print(f"          {ee}: {_fmt_pose(r[f'extra_pose_oe/{ee}'])}")
-        if extra_poses_oe_dict:
-            print()
     print(_SEP)
 
     return top_k

@@ -385,8 +385,26 @@ class CuroboPlanner:
     def get_ee_pose(self, current_q: torch.Tensor) -> Pose:
         """Get the end-effector pose of the robot."""
 
+        return self.get_link_pose(current_q, self.motion_gen.kinematics.ee_link)
+
+    def get_link_pose(self, current_q: torch.Tensor, link_name: str) -> Pose:
+        """Get the pose of a specific link in the robot root frame."""
+
+        return self.get_link_poses(current_q, [link_name])[link_name]
+
+    def get_link_poses(self, current_q: torch.Tensor, link_names: list[str]) -> dict[str, Pose]:
+        """Get the poses of specific links in the robot root frame."""
+
         current_joint_state = JointState(
             position=self._to_curobo_device(current_q), joint_names=self.target_joint_names
         )
         kin_state = self.motion_gen.compute_kinematics(current_joint_state)
-        return kin_state.link_poses[self.motion_gen.kinematics.ee_link]
+
+        missing_link_names = [link_name for link_name in link_names if link_name not in kin_state.link_poses]
+        if missing_link_names:
+            raise ValueError(
+                f"Unknown cuRobo link name(s): {missing_link_names}. Available links:"
+                f" {list(kin_state.link_poses.keys())}"
+            )
+
+        return {link_name: kin_state.link_poses[link_name] for link_name in link_names}

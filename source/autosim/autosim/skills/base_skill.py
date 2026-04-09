@@ -88,6 +88,18 @@ class CuroboSkillExtraCfg(SkillExtraCfg):
     debug_target_pose: bool = False
     """Whether to debug the target pose."""
 
+    extra_target_link_names: list[str] = []
+    """Additional cuRobo link names constrained during planning."""
+
+    extra_target_mode: str = "keep_current"
+    """How additional cuRobo link goals are generated."""
+
+    def __post_init__(self) -> None:
+        if self.extra_target_mode != "keep_current":
+            raise ValueError(f"Unsupported extra_target_mode: {self.extra_target_mode}")
+        if len(self.extra_target_link_names) != len(set(self.extra_target_link_names)):
+            raise ValueError("extra_target_link_names must not contain duplicates.")
+
 
 class CuroboSkillBase(Skill):
     """Base class for skills dependent on curobo."""
