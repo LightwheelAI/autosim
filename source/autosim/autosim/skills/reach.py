@@ -41,7 +41,6 @@ class ReachSkill(CuroboSkillBase):
         # variables for the skill execution
         self._trajectory = None
         self._step_idx = 0
-        self._cached_initial_extra_target_offsets = None
 
     def _build_activate_joint_state(
         self, full_sim_joint_names: list[str], full_sim_q: torch.Tensor, full_sim_qd: torch.Tensor | None = None
@@ -156,7 +155,10 @@ class ReachSkill(CuroboSkillBase):
         return extra_link_offsets_in_primary
 
     def _build_extra_target_poses(
-        self, activate_q: torch.Tensor, target_pose: torch.Tensor
+        self,
+        activate_q: torch.Tensor,
+        target_pose: torch.Tensor,
+        env_extra_info: EnvExtraInfo,
     ) -> dict[str, torch.Tensor] | None:
         """Build link-level extra target poses based on configuration.
 
@@ -173,7 +175,7 @@ class ReachSkill(CuroboSkillBase):
         if self.cfg.extra_cfg.extra_target_mode == "keep_relative_offset":
             return self._build_keep_relative_offset_extra_target_poses(activate_q, target_pose)
         if self.cfg.extra_cfg.extra_target_mode == "keep_initial_relative_offset":
-            return self._build_keep_initial_relative_offset_extra_target_poses(activate_q, target_pose)
+            return self._build_keep_initial_relative_offset_extra_target_poses(activate_q, target_pose, env_extra_info)
         raise ValueError(f"Unsupported extra_target_mode: {self.cfg.extra_cfg.extra_target_mode}")
 
     def _build_keep_current_extra_target_poses(self, activate_q: torch.Tensor) -> dict[str, torch.Tensor] | None:
@@ -208,7 +210,10 @@ class ReachSkill(CuroboSkillBase):
         )
 
     def _build_keep_initial_relative_offset_extra_target_poses(
-        self, activate_q: torch.Tensor, target_pose: torch.Tensor
+        self,
+        activate_q: torch.Tensor,
+        target_pose: torch.Tensor,
+        env_extra_info: EnvExtraInfo,
     ) -> dict[str, torch.Tensor] | None:
         """Build extra targets by preserving the first observed rigid transform from primary EE to each extra link."""
 
@@ -216,17 +221,22 @@ class ReachSkill(CuroboSkillBase):
             self._get_current_primary_and_extra_link_poses(activate_q)
         )
 
-        if self._cached_initial_extra_target_offsets is None:
-            self._cached_initial_extra_target_offsets = self._compute_relative_offsets_in_primary(
+        if env_extra_info.cached_initial_extra_target_offsets is None:
+            env_extra_info.cached_initial_extra_target_offsets = self._compute_relative_offsets_in_primary(
                 primary_link_pose_in_robot_root, extra_link_poses_in_robot_root
             )
             self._logger.info(
                 "Cached initial relative offsets for extra links:"
-                f" {list(self._cached_initial_extra_target_offsets.keys())}"
+                f" {list(env_extra_info.cached_initial_extra_target_offsets.keys())}"
+            )
+        else:
+            self._logger.info(
+                "Reusing cached initial relative offsets for extra links:"
+                f" {list(env_extra_info.cached_initial_extra_target_offsets.keys())}"
             )
 
         return self._compute_relative_extra_target_poses(
-            primary_link_pose_in_robot_root, self._cached_initial_extra_target_offsets, target_pose
+            primary_link_pose_in_robot_root, env_extra_info.cached_initial_extra_target_offsets, target_pose
         )
 
     def extract_goal_from_info(
@@ -268,7 +278,7 @@ class ReachSkill(CuroboSkillBase):
         activate_q, _ = self._build_activate_joint_state(
             robot.data.joint_names, robot.data.joint_pos[0], robot.data.joint_vel[0]
         )
-        extra_target_poses = self._build_extra_target_poses(activate_q, target_pose)
+        extra_target_poses = self._build_extra_target_poses(activate_q, target_pose, env_extra_info)
 
         return SkillGoal(target_object=target_object, target_pose=target_pose, extra_target_poses=extra_target_poses)
 
@@ -336,6 +346,5 @@ class ReachSkill(CuroboSkillBase):
         """Reset the reach skill."""
 
         super().reset()
-        self._cached_initial_extra_target_offsets = None
         self._step_idx = 0
         self._trajectory = None

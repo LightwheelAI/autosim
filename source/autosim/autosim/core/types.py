@@ -90,11 +90,15 @@ class EnvExtraInfo:
     object_navigate_sample_range: dict[str, tuple[float, float]] = field(default_factory=dict)
     """The sample range for the navigate skill. each object can have a tuple of (min_angle, max_angle) in radians."""
 
+    cached_initial_extra_target_offsets: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
+    """Cached primary-frame offsets for extra target links, reused across multiple reach-like skills."""
+
     def __post_init__(self):
         self.reset()
 
     def reset(self) -> None:
         """Reset the environment extra information."""
+        self.cached_initial_extra_target_offsets = None
         self._reset_target_pose_iterators()
 
     def _reset_target_pose_iterators(self) -> None:

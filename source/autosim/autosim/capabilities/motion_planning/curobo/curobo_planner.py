@@ -202,6 +202,11 @@ class CuroboPlanner:
             current_q = current_q[:dof_needed]
             current_qd = current_qd[:dof_needed]
 
+        joint_limits = self.motion_gen.kinematics.get_joint_limits()
+        current_q = torch.clamp(
+            self._to_curobo_device(current_q), joint_limits.position[0], joint_limits.position[1]
+        ).to(current_q.device)
+
         # build the target pose
         goal = Pose(
             position=self._to_curobo_device(target_pos),
