@@ -180,3 +180,23 @@ def debug_visualize_goal_sampling(
     fig.canvas.draw_idle()
     fig.canvas.flush_events()
     plt.pause(0.02)
+
+
+def draw_line(start, end, color=(1.0, 0.0, 0.0, 1.0), size=1.0):
+    """
+    Draws a single line between two points.
+    """
+    import isaacsim.util.debug_draw._debug_draw as omni_debug_draw
+
+    draw = omni_debug_draw.acquire_debug_draw_interface()
+    draw.draw_lines([start], [end], [color], [size])
+
+
+def clear_debug_drawing():
+    """
+    Clears all debug drawings.
+    """
+    import isaacsim.util.debug_draw._debug_draw as omni_debug_draw
+
+    draw = omni_debug_draw.acquire_debug_draw_interface()
+    draw.clear_lines()
