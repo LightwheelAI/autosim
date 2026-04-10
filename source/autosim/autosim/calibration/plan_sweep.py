@@ -7,6 +7,7 @@ import torch
 
 from autosim.core.pipeline import AutoSimPipeline
 from autosim.core.registration import SkillRegistry
+from autosim.skills.reach import ReachSkill
 
 from .pose_sampler import OffsetSampler, PoseSampler
 
@@ -33,27 +34,24 @@ def _fmt_pose(vals: list[float]) -> str:
 
 
 def _build_extra_target_link_goals(
-    pipeline: AutoSimPipeline, activate_q: torch.Tensor, batch_size: int
+    reach_skill: ReachSkill,
+    activate_q: torch.Tensor,
+    target_poses_r: torch.Tensor,
+    env_extra_info,
 ) -> dict[str, torch.Tensor] | None:
-    """Build batched extra link goals to match live reach execution."""
-    extra_cfg = pipeline.cfg.skills.reach.extra_cfg
-    if extra_cfg.extra_target_mode == "keep_current":
-        return _build_keep_current_extra_target_link_goals(pipeline, activate_q, batch_size)
-    raise ValueError(f"Unsupported extra_target_mode: {extra_cfg.extra_target_mode}")
-
-
-def _build_keep_current_extra_target_link_goals(
-    pipeline: AutoSimPipeline, activate_q: torch.Tensor, batch_size: int
-) -> dict[str, torch.Tensor] | None:
-    extra_target_link_names = pipeline.cfg.skills.reach.extra_cfg.extra_target_link_names
-    if not extra_target_link_names:
+    """Build batched extra link goals by reusing ReachSkill logic."""
+    if not reach_skill.cfg.extra_cfg.extra_target_link_names:
         return None
 
-    current_link_poses = pipeline._motion_planner.get_link_poses(activate_q, extra_target_link_names)
-    return {
-        link_name: torch.cat((pose.position, pose.quaternion), dim=-1).repeat(batch_size, 1)
-        for link_name, pose in current_link_poses.items()
-    }
+    goal_list = []
+    for target_pose in target_poses_r:
+        goal_list.append(reach_skill._build_extra_target_poses(activate_q, target_pose, env_extra_info))  # noqa: SLF001
+
+    first_goal = goal_list[0]
+    if first_goal is None:
+        return None
+
+    return {link_name: torch.stack([goal[link_name] for goal in goal_list], dim=0) for link_name in first_goal.keys()}
 
 
 def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[dict[str, Any]]:
@@ -82,7 +80,6 @@ def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[
         python reach_plan_sweep.py --reach_skill_index 1 ...
     """
 
-    # modified from pipeline.run() to only execute the reach skill at the specified index
     pipeline.initialize()
 
     decompose_result = pipeline.decompose()
@@ -107,7 +104,7 @@ def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[
             if is_reach and reach_skill_counter == cfg.reach_skill_index:
                 obj_name = skill_info.target_object
                 obj_pose_idx = reach_count_per_object.get(obj_name, 0)
-                return _sweep(pipeline, cfg, obj_name, obj_pose_idx)
+                return _sweep(pipeline, cfg, obj_name, obj_pose_idx, skill)
 
             goal = skill.extract_goal_from_info(skill_info, pipeline._env, pipeline._env_extra_info)
             if is_reach:
@@ -129,23 +126,20 @@ def reach_plan_sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg) -> list[
     )
 
 
-def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj_pose_idx: int) -> list[dict[str, Any]]:
+def _sweep(
+    pipeline: AutoSimPipeline,
+    cfg: ReachPlanSweepCfg,
+    obj_name: str,
+    obj_pose_idx: int,
+    reach_skill: ReachSkill,
+) -> list[dict[str, Any]]:
     """
     Core sweep logic. Called once the environment is in the correct pre-reach state.
 
     Samples K candidate poses around the base reach target (object frame), transforms them to
     robot root frame, then batch-plans with cuRobo. When configured, extra link goals are
-    generated from the live joint state using cuRobo FK and held constant across the batch,
-    matching the extra-target strategy used by `ReachSkill.extract_goal_from_info()`.
-
-    Args:
-        pipeline: The pipeline providing env, planner, and extra info.
-        cfg: Sweep configuration (sampler, top_k, ik_only).
-        obj_name: Name of the target object in the scene.
-        obj_pose_idx: Index into `object_reach_target_poses[obj_name]` — which reach call this is.
-
-    Returns:
-        Top-k result rows (see `reach_plan_sweep` for row schema), sorted by plan quality.
+    generated from the live joint state using the same extra-target strategy as
+    `ReachSkill.extract_goal_from_info()`.
     """
 
     env = pipeline._env
@@ -159,17 +153,13 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
         raise ValueError(f"pose index {obj_pose_idx} out of range for object '{obj_name}' ({len(pose_list)} poses).")
 
     base_pose_oe = torch.as_tensor(pose_list[obj_pose_idx], device=env.device, dtype=torch.float32).view(7)
-
-    # Sample object-frame candidate poses around base
     poses_oe = cfg.sampling.sample(base_pose_oe)
     k = int(poses_oe.shape[0])
 
-    # Read live object pose in world frame
     obj_pose_w = env.scene[obj_name].data.root_pose_w[env_id]
     obj_pos_w = obj_pose_w[:3].view(1, 3).repeat(k, 1)
     obj_quat_w = obj_pose_w[3:].view(1, 4).repeat(k, 1)
 
-    # object frame -> world frame -> robot root frame
     target_pos_w, target_quat_w = PoseUtils.combine_frame_transforms(
         obj_pos_w, obj_quat_w, poses_oe[:, :3], poses_oe[:, 3:]
     )
@@ -178,24 +168,16 @@ def _sweep(pipeline: AutoSimPipeline, cfg: ReachPlanSweepCfg, obj_name: str, obj
     rr_quat_w = robot_root_pose_w[3:].view(1, 4).repeat(k, 1)
     target_pos_r, target_quat_r = PoseUtils.subtract_frame_transforms(rr_pos_w, rr_quat_w, target_pos_w, target_quat_w)
 
-    # Build current joint state in planner joint order (name-based mapping)
     state = pipeline._build_world_state()
-    full_sim_joint_names = state.sim_joint_names
-    full_q = state.robot_joint_pos
-    full_qd = state.robot_joint_vel
-    activate_q, activate_qd = [], []
-    for joint_name in planner.target_joint_names:
-        if joint_name not in full_sim_joint_names:
-            raise ValueError(f"Planner joint '{joint_name}' not found in simulation joint names.")
-        idx = full_sim_joint_names.index(joint_name)
-        activate_q.append(full_q[idx])
-        activate_qd.append(full_qd[idx])
-    activate_q = torch.stack(activate_q, dim=0)
-    activate_qd = torch.stack(activate_qd, dim=0)
+    activate_q, activate_qd = reach_skill._build_activate_joint_state(  # noqa: SLF001
+        state.sim_joint_names, state.robot_joint_pos, state.robot_joint_vel
+    )
+    if activate_qd is None:
+        raise ValueError("activate_qd should not be None when sweep planning reach trajectories.")
 
-    link_goals = _build_extra_target_link_goals(pipeline, activate_q, k)
+    target_poses_r = torch.cat((target_pos_r, target_quat_r), dim=-1)
+    link_goals = _build_extra_target_link_goals(reach_skill, activate_q, target_poses_r, env_extra_info)
 
-    # Batch plan
     t0 = time.time()
     if cfg.ik_only:
         result = planner.solve_ik_batch(target_pos_r, target_quat_r, link_goals=link_goals)
