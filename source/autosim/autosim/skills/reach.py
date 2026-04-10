@@ -42,6 +42,203 @@ class ReachSkill(CuroboSkillBase):
         self._trajectory = None
         self._step_idx = 0
 
+    def _build_activate_joint_state(
+        self, full_sim_joint_names: list[str], full_sim_q: torch.Tensor, full_sim_qd: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Extract the planner's active joint state from full simulation joint state.
+
+        cuRobo typically plans over a subset of "active joints" (`self._planner.target_joint_names`).
+        This helper slices the full simulation joint vectors into that active subset, ordered exactly
+        as the planner expects, returning `q` and (optionally) `qd`.
+
+        Args:
+            full_sim_joint_names: Joint name list from simulation (index-aligned with `full_sim_q`/`full_sim_qd`).
+            full_sim_q: Full simulation joint positions, shape `[num_sim_joints]`.
+            full_sim_qd: Optional full simulation joint velocities, shape `[num_sim_joints]`.
+
+        Returns:
+            A tuple `(activate_q, activate_qd)` where:
+            - `activate_q` is ordered by `self._planner.target_joint_names`, shape `[num_active_joints]`.
+            - `activate_qd` is the corresponding velocities if `full_sim_qd` is provided; otherwise `None`.
+
+        Raises:
+            ValueError: If any planner target joint is missing from `full_sim_joint_names`.
+        """
+
+        activate_q, activate_qd = [], [] if full_sim_qd is not None else None
+        for joint_name in self._planner.target_joint_names:
+            if joint_name not in full_sim_joint_names:
+                raise ValueError(
+                    f"Joint {joint_name} in planner activate joints is not in the full simulation joint names."
+                )
+            sim_joint_idx = full_sim_joint_names.index(joint_name)
+            activate_q.append(full_sim_q[sim_joint_idx])
+            if full_sim_qd is not None and activate_qd is not None:
+                activate_qd.append(full_sim_qd[sim_joint_idx])
+
+        activate_q_tensor = torch.stack(activate_q, dim=0)
+        if activate_qd is None:
+            return activate_q_tensor, None
+        return activate_q_tensor, torch.stack(activate_qd, dim=0)
+
+    def _get_current_primary_and_extra_link_poses(
+        self, activate_q: torch.Tensor
+    ) -> tuple[tuple[torch.Tensor, torch.Tensor], dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+        """Get current primary and extra link poses in robot root frame."""
+
+        current_link_poses = self._planner.get_link_poses(
+            activate_q, [self._planner.motion_gen.kinematics.ee_link, *self.cfg.extra_cfg.extra_target_link_names]
+        )
+        primary_pose_in_robot_root = current_link_poses[self._planner.motion_gen.kinematics.ee_link]
+        primary_link_pose_in_robot_root = (
+            primary_pose_in_robot_root.position,
+            primary_pose_in_robot_root.quaternion,
+        )
+        extra_link_poses_in_robot_root = {
+            link_name: (pose.position, pose.quaternion)
+            for link_name, pose in current_link_poses.items()
+            if link_name != self._planner.motion_gen.kinematics.ee_link
+        }
+        return primary_link_pose_in_robot_root, extra_link_poses_in_robot_root
+
+    def _compute_relative_extra_target_poses(
+        self,
+        primary_link_pose_in_robot_root: tuple[torch.Tensor, torch.Tensor],
+        extra_link_offsets_in_primary: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        target_pose: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Project cached or current primary-frame offsets onto the target primary pose."""
+
+        primary_target_pos_in_robot_root = target_pose[:3].unsqueeze(0).to(primary_link_pose_in_robot_root[0].device)
+        primary_target_quat_in_robot_root = target_pose[3:].unsqueeze(0).to(primary_link_pose_in_robot_root[1].device)
+
+        extra_target_poses = {}
+        for link_name, (link_pos_in_primary, link_quat_in_primary) in extra_link_offsets_in_primary.items():
+            link_target_pos_in_robot_root, link_target_quat_in_robot_root = PoseUtils.combine_frame_transforms(
+                primary_target_pos_in_robot_root,
+                primary_target_quat_in_robot_root,
+                link_pos_in_primary,
+                link_quat_in_primary,
+            )
+            self._logger.info(
+                f"Relative offset for {link_name} in primary frame: pos={link_pos_in_primary},"
+                f" quat={link_quat_in_primary}"
+            )
+            self._logger.info(
+                f"Target pose for {link_name} in robot root frame: pos={link_target_pos_in_robot_root},"
+                f" quat={link_target_quat_in_robot_root}"
+            )
+            extra_target_poses[link_name] = torch.cat(
+                (link_target_pos_in_robot_root, link_target_quat_in_robot_root), dim=-1
+            ).squeeze(0)
+
+        return extra_target_poses
+
+    def _compute_relative_offsets_in_primary(
+        self,
+        primary_link_pose_in_robot_root: tuple[torch.Tensor, torch.Tensor],
+        extra_link_poses_in_robot_root: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    ) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+        """Compute the current rigid offset from the primary link frame to each extra link."""
+
+        primary_pos_in_robot_root, primary_quat_in_robot_root = primary_link_pose_in_robot_root
+        extra_link_offsets_in_primary = {}
+        for link_name, (link_pos_in_robot_root, link_quat_in_robot_root) in extra_link_poses_in_robot_root.items():
+            link_pos_in_primary, link_quat_in_primary = PoseUtils.subtract_frame_transforms(
+                primary_pos_in_robot_root,
+                primary_quat_in_robot_root,
+                link_pos_in_robot_root,
+                link_quat_in_robot_root,
+            )
+            extra_link_offsets_in_primary[link_name] = (link_pos_in_primary, link_quat_in_primary)
+
+        return extra_link_offsets_in_primary
+
+    def _build_extra_target_poses(
+        self,
+        activate_q: torch.Tensor,
+        target_pose: torch.Tensor,
+        env_extra_info: EnvExtraInfo,
+    ) -> dict[str, torch.Tensor] | None:
+        """Build link-level extra target poses based on configuration.
+
+        This is the dispatcher for `extra_target_mode`. It returns a dict mapping link names to pose
+        tensors in `[x, y, z, qw, qx, qy, qz]` (single-sample), used as additional link goals/constraints
+        during planning.
+        """
+
+        if not self.cfg.extra_cfg.extra_target_link_names:
+            return None
+
+        if self.cfg.extra_cfg.extra_target_mode == "keep_current":
+            return self._build_keep_current_extra_target_poses(activate_q)
+        if self.cfg.extra_cfg.extra_target_mode == "keep_relative_offset":
+            return self._build_keep_relative_offset_extra_target_poses(activate_q, target_pose)
+        if self.cfg.extra_cfg.extra_target_mode == "keep_initial_relative_offset":
+            return self._build_keep_initial_relative_offset_extra_target_poses(activate_q, target_pose, env_extra_info)
+        raise ValueError(f"Unsupported extra_target_mode: {self.cfg.extra_cfg.extra_target_mode}")
+
+    def _build_keep_current_extra_target_poses(self, activate_q: torch.Tensor) -> dict[str, torch.Tensor] | None:
+        """Build "keep current pose" extra targets for configured links.
+
+        In `keep_current` mode, this computes FK for each link in `extra_target_link_names` and uses
+        its current pose as the planning target, effectively constraining those links to remain fixed.
+        """
+
+        extra_target_poses = {}
+        for link_name, pose in self._planner.get_link_poses(
+            activate_q, self.cfg.extra_cfg.extra_target_link_names
+        ).items():
+            extra_target_poses[link_name] = torch.cat((pose.position, pose.quaternion), dim=-1).squeeze(0)
+
+        return extra_target_poses
+
+    def _build_keep_relative_offset_extra_target_poses(
+        self, activate_q: torch.Tensor, target_pose: torch.Tensor
+    ) -> dict[str, torch.Tensor] | None:
+        """Build extra targets by preserving the current rigid transform from primary EE to each extra link."""
+
+        primary_link_pose_in_robot_root, extra_link_poses_in_robot_root = (
+            self._get_current_primary_and_extra_link_poses(activate_q)
+        )
+
+        extra_link_offsets_in_primary = self._compute_relative_offsets_in_primary(
+            primary_link_pose_in_robot_root, extra_link_poses_in_robot_root
+        )
+        return self._compute_relative_extra_target_poses(
+            primary_link_pose_in_robot_root, extra_link_offsets_in_primary, target_pose
+        )
+
+    def _build_keep_initial_relative_offset_extra_target_poses(
+        self,
+        activate_q: torch.Tensor,
+        target_pose: torch.Tensor,
+        env_extra_info: EnvExtraInfo,
+    ) -> dict[str, torch.Tensor] | None:
+        """Build extra targets by preserving the first observed rigid transform from primary EE to each extra link."""
+
+        primary_link_pose_in_robot_root, extra_link_poses_in_robot_root = (
+            self._get_current_primary_and_extra_link_poses(activate_q)
+        )
+
+        if env_extra_info.cached_initial_extra_target_offsets is None:
+            env_extra_info.cached_initial_extra_target_offsets = self._compute_relative_offsets_in_primary(
+                primary_link_pose_in_robot_root, extra_link_poses_in_robot_root
+            )
+            self._logger.info(
+                "Cached initial relative offsets for extra links:"
+                f" {list(env_extra_info.cached_initial_extra_target_offsets.keys())}"
+            )
+        else:
+            self._logger.info(
+                "Reusing cached initial relative offsets for extra links:"
+                f" {list(env_extra_info.cached_initial_extra_target_offsets.keys())}"
+            )
+
+        return self._compute_relative_extra_target_poses(
+            primary_link_pose_in_robot_root, env_extra_info.cached_initial_extra_target_offsets, target_pose
+        )
+
     def extract_goal_from_info(
         self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
     ) -> SkillGoal:
@@ -78,28 +275,10 @@ class ReachSkill(CuroboSkillBase):
         )
 
         target_pose = torch.cat((reach_target_pos_in_robot_root, reach_target_quat_in_robot_root), dim=-1).squeeze(0)
-
-        if target_object in env_extra_info.object_extra_reach_target_poses.keys():
-            extra_target_poses = {}
-            for ee_name in env_extra_info.object_extra_reach_target_poses[target_object].keys():
-                ee_target_pose = env_extra_info.get_next_extra_reach_target_pose(target_object, ee_name)
-                ee_target_pose = torch.as_tensor(ee_target_pose, device=env.device)
-                extra_target_pos_in_obj, extra_target_quat_in_obj = ee_target_pose[:3].unsqueeze(0), ee_target_pose[
-                    3:
-                ].unsqueeze(0)
-                extra_target_pos_in_env, extra_target_quat_in_env = PoseUtils.combine_frame_transforms(
-                    object_pos_in_env, object_quat_in_env, extra_target_pos_in_obj, extra_target_quat_in_obj
-                )
-                self._logger.info(f"Extra target position for {ee_name} in environment: {extra_target_pos_in_env}")
-                self._logger.info(f"Extra target quaternion for {ee_name} in environment: {extra_target_quat_in_env}")
-                extra_target_pos_in_robot_root, extra_target_quat_in_robot_root = PoseUtils.subtract_frame_transforms(
-                    robot_root_pos_in_env, robot_root_quat_in_env, extra_target_pos_in_env, extra_target_quat_in_env
-                )
-                extra_target_poses[ee_name] = torch.cat(
-                    (extra_target_pos_in_robot_root, extra_target_quat_in_robot_root), dim=-1
-                ).squeeze(0)
-        else:
-            extra_target_poses = None
+        activate_q, _ = self._build_activate_joint_state(
+            robot.data.joint_names, robot.data.joint_pos[0], robot.data.joint_vel[0]
+        )
+        extra_target_poses = self._build_extra_target_poses(activate_q, target_pose, env_extra_info)
 
         return SkillGoal(target_object=target_object, target_pose=target_pose, extra_target_poses=extra_target_poses)
 
@@ -111,22 +290,12 @@ class ReachSkill(CuroboSkillBase):
         target_pose = goal.target_pose  # target pose in the robot root frame
         target_pos, target_quat = target_pose[:3], target_pose[3:]
 
-        full_sim_joint_names = state.sim_joint_names
-        full_sim_q = state.robot_joint_pos
-        full_sim_qd = state.robot_joint_vel
-        planner_activate_joints = self._planner.target_joint_names
+        activate_q, activate_qd = self._build_activate_joint_state(
+            state.sim_joint_names, state.robot_joint_pos, state.robot_joint_vel
+        )
+        if activate_qd is None:
+            raise ValueError("activate_qd should not be None when planning reach trajectories.")
 
-        activate_q, activate_qd = [], []
-        for joint_name in planner_activate_joints:
-            if joint_name in full_sim_joint_names:
-                activate_q.append(full_sim_q[full_sim_joint_names.index(joint_name)])
-                activate_qd.append(full_sim_qd[full_sim_joint_names.index(joint_name)])
-            else:
-                raise ValueError(
-                    f"Joint {joint_name} in planner activate joints is not in the full simulation joint names."
-                )
-        activate_q = torch.stack(activate_q, dim=0)
-        activate_qd = torch.stack(activate_qd, dim=0)
         self._trajectory = self._planner.plan_motion(
             target_pos,
             target_quat,

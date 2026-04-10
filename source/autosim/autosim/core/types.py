@@ -86,17 +86,19 @@ class EnvExtraInfo:
 
     object_reach_target_poses: dict[str, list[torch.Tensor]] = field(default_factory=dict)
     """The reach target poses in the objects frame. each object can have a list of reach target poses [x, y, z, qw, qx, qy, qz] in the order of execution."""
-    object_extra_reach_target_poses: dict[str, dict[str, list[torch.Tensor]]] = field(default_factory=dict)
-    """The extra reach target poses in the objects frame. each object can have a list of extra reach target poses [x, y, z, qw, qx, qy, qz] with ee_name as the key in the order of execution."""
 
     object_navigate_sample_range: dict[str, tuple[float, float]] = field(default_factory=dict)
     """The sample range for the navigate skill. each object can have a tuple of (min_angle, max_angle) in radians."""
+
+    cached_initial_extra_target_offsets: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
+    """Cached primary-frame offsets for extra target links, reused across multiple reach-like skills."""
 
     def __post_init__(self):
         self.reset()
 
     def reset(self) -> None:
         """Reset the environment extra information."""
+        self.cached_initial_extra_target_offsets = None
         self._reset_target_pose_iterators()
 
     def _reset_target_pose_iterators(self) -> None:
@@ -105,22 +107,12 @@ class EnvExtraInfo:
             object_name: self._build_iterator(reach_target_poses)
             for object_name, reach_target_poses in self.object_reach_target_poses.items()
         }
-        self._object_extra_reach_target_poses_iterator_dict = {
-            object_name: {
-                ee_name: self._build_iterator(extra_reach_target_poses)
-                for ee_name, extra_reach_target_poses in extra_reach_target_poses.items()
-            }
-            for object_name, extra_reach_target_poses in self.object_extra_reach_target_poses.items()
-        }
 
     def _build_iterator(self, value_list: list[torch.Tensor]) -> Iterator[torch.Tensor]:
         yield from value_list
 
     def get_next_reach_target_pose(self, object_name: str) -> torch.Tensor:
         return next(self._object_reach_target_poses_iterator_dict[object_name])
-
-    def get_next_extra_reach_target_pose(self, object_name: str, ee_name: str) -> torch.Tensor:
-        return next(self._object_extra_reach_target_poses_iterator_dict[object_name][ee_name])
 
     def get_navigate_sample_range(self, object_name: str) -> tuple[float, float]:
         return self.object_navigate_sample_range.get(object_name, (0.0, 2 * np.pi))
