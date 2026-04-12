@@ -3,9 +3,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 from curobo.cuda_robot_model.util import load_robot_yaml
+
 from curobo.geom.types import WorldConfig
+from curobo.rollout.cost.pose_cost import PoseCostMetric
 from curobo.types.base import TensorDeviceType
 from curobo.types.file_path import ContentPath
 from curobo.types.math import Pose
@@ -96,6 +99,9 @@ class CuroboPlanner:
         # Read static world geometry once
         self._initialize_static_world()
 
+        # Cache for dynamic world synchronization.
+        self._cached_object_mappings: dict[str, str] | None = None
+
         # Define supported cuRobo primitive types for object discovery and pose synchronization
         self.primitive_types: list[str] = ["mesh", "cuboid", "sphere", "capsule", "cylinder", "voxel", "blox"]
 
@@ -147,25 +153,124 @@ class CuroboPlanner:
     def _initialize_static_world(self) -> None:
         """Initialize static world geometry from USD stage (only called once)."""
 
+        self.refresh_world_from_usd()
+
+    def _build_world_config_from_stage(self) -> WorldConfig:
+        """Build world obstacle config from current USD stage.
+
+        This helper centralizes the "what to include/ignore" policy so both
+        static initialization and runtime refresh use exactly the same rules.
+        """
+
         env_prim_path = f"/World/envs/env_{self._env_id}"
         robot_prim_path = self.cfg.robot_prim_path or f"{env_prim_path}/Robot"
 
-        only_paths = [f"{env_prim_path}/{sub}" for sub in self.cfg.world_only_subffixes]
+        world_only_subffixes = self.cfg.world_only_subffixes or []
+        only_paths = [f"{env_prim_path}/{sub}" for sub in world_only_subffixes]
 
-        ignore_list = [f"{env_prim_path}/{sub}" for sub in self.cfg.world_ignore_subffixes] or [
+        world_ignore_subffixes = self.cfg.world_ignore_subffixes or []
+        ignore_list = [f"{env_prim_path}/{sub}" for sub in world_ignore_subffixes] or [
             f"{env_prim_path}/target",
             "/World/defaultGroundPlane",
             "/curobo",
         ]
         ignore_list.append(robot_prim_path)
 
-        self._static_world_config = self.usd_helper.get_obstacles_from_stage(
+        world_cfg = self.usd_helper.get_obstacles_from_stage(
             only_paths=only_paths,
             reference_prim_path=robot_prim_path,
             ignore_substring=ignore_list,
         )
-        self._static_world_config = self._static_world_config.get_collision_check_world()
-        self.motion_gen.update_world(self._static_world_config)
+        return world_cfg.get_collision_check_world()
+
+    def refresh_world_from_usd(self) -> None:
+        """Rebuild world obstacles from USD and update cuRobo world.
+
+        Use this when scene geometry itself changes (objects appear/disappear or
+        move significantly). This is more expensive than pure pose sync.
+        """
+
+        world_cfg = self._build_world_config_from_stage()
+        self.motion_gen.update_world(world_cfg)
+        self._static_world_config = world_cfg
+        self._invalidate_object_mapping_cache()
+
+    def _get_object_mappings(self) -> dict[str, str]:
+        """Map IsaacLab scene object names to cuRobo world obstacle names."""
+
+        if self._cached_object_mappings is not None:
+            return self._cached_object_mappings
+
+        world_model = self.motion_gen.world_coll_checker.world_model
+        rigid_objects = self._env.scene.rigid_objects
+
+        env_prefix = f"/World/envs/env_{self._env_id}/"
+        world_object_paths: list[str] = []
+        for primitive_type in self.primitive_types:
+            primitive_list = getattr(world_model, primitive_type, None)
+            if not primitive_list:
+                continue
+            for primitive in primitive_list:
+                primitive_name = getattr(primitive, "name", None)
+                if primitive_name is None:
+                    continue
+                primitive_name = str(primitive_name)
+                if env_prefix in primitive_name:
+                    world_object_paths.append(primitive_name)
+
+        mappings: dict[str, str] = {}
+        for object_name in rigid_objects.keys():
+            for world_path in world_object_paths:
+                if object_name.lower().replace("_", "") in world_path.lower().replace("_", ""):
+                    mappings[object_name] = world_path
+                    break
+
+        self._cached_object_mappings = mappings
+        self._logger.debug(f"Object mappings built: {mappings}")
+        return mappings
+
+    def _invalidate_object_mapping_cache(self) -> None:
+        """Invalidate cached object-name mapping used for dynamic sync."""
+
+        self._cached_object_mappings = None
+
+    def _sync_dynamic_objects(self) -> int:
+        """Synchronize dynamic object poses into cuRobo world model.
+
+        Returns:
+            Number of obstacles whose pose was updated.
+        """
+
+        object_mappings = self._get_object_mappings()
+        if not object_mappings:
+            return 0
+
+        rigid_objects = self._env.scene.rigid_objects
+        env_origin = self._env.scene.env_origins[self._env_id]
+
+        updated_count = 0
+        for object_name, world_obstacle_name in object_mappings.items():
+            try:
+                obj = rigid_objects[object_name]
+                # Convert from world frame to env-local frame, matching how cuRobo world
+                # is usually extracted with env-relative reference prims.
+                obj_pos = obj.data.root_pos_w[self._env_id] - env_origin
+                obj_quat = obj.data.root_quat_w[self._env_id]
+                obj_pose = Pose(
+                    position=self._to_curobo_device(obj_pos),
+                    quaternion=self._to_curobo_device(obj_quat),
+                )
+                self.motion_gen.world_coll_checker.update_obstacle_pose(
+                    world_obstacle_name,
+                    obj_pose,
+                    env_idx=self._env_id,
+                    update_cpu_reference=True,
+                )
+                updated_count += 1
+            except Exception as exc:
+                self._logger.debug(f"dynamic sync skipped for {object_name}: {exc}")
+
+        return updated_count
 
     def plan_motion(
         self,
@@ -188,6 +293,14 @@ class CuroboPlanner:
         Returns:
             JointState of the trajectory or None if planning failed
         """
+
+        # A-scope migration:
+        # - Optional full USD world rebuild before planning (accurate, expensive).
+        # - Optional dynamic object pose sync before planning (cheap, incremental).
+        if self.cfg.enable_update_world_before_plan:
+            self.refresh_world_from_usd()
+        elif self.cfg.enable_dynamic_world_sync:
+            self._sync_dynamic_objects()
 
         if current_qd is None:
             current_qd = torch.zeros_like(current_q)
@@ -233,11 +346,26 @@ class CuroboPlanner:
                 for link_name, pose in link_goals.items()
             }
 
+        # Build per-call plan config: clone only when we need to attach a pose_cost_metric
+        # so the shared self.plan_config is never mutated.
+        if self.cfg.reach_partial_pose_weight is not None:
+            weights = torch.tensor(
+                self.cfg.reach_partial_pose_weight,
+                device=self.tensor_args.device,
+                dtype=self.tensor_args.dtype,
+            )
+            pose_metric = PoseCostMetric(reach_partial_pose=True, reach_vec_weight=weights)
+            active_plan_config = self.plan_config.clone()
+            active_plan_config.pose_cost_metric = pose_metric
+            self._logger.debug(f"reach_partial_pose_weight applied: {self.cfg.reach_partial_pose_weight}")
+        else:
+            active_plan_config = self.plan_config
+
         # execute planning
         result = self.motion_gen.plan_single(
             current_joint_state.unsqueeze(0),
             goal,
-            self.plan_config,
+            active_plan_config,
             link_poses=link_poses,
         )
 
@@ -250,6 +378,7 @@ class CuroboPlanner:
         else:
             self._logger.warning(f"planning failed: {result.status}")
             return None
+
 
     def plan_motion_batch(
         self,
@@ -381,6 +510,80 @@ class CuroboPlanner:
                 for ee_name, poses in link_goals.items()
             }
         return self.motion_gen.ik_solver.solve_batch(goal, link_poses=link_poses)
+
+    def plan_to_joint_config(
+        self,
+        target_q: torch.Tensor,
+        current_q: torch.Tensor,
+        current_qd: torch.Tensor | None = None,
+    ) -> JointState | None:
+        """Plan a joint-space trajectory to a target joint configuration.
+
+        Unlike plan_motion which targets a Cartesian pose, this plans directly
+        in joint space using cuRobo's plan_single_js. Used by RetractSkill to
+        move the robot to a predefined retract configuration.
+
+        Args:
+            target_q: Target joint positions, shape [dof].
+            current_q: Current joint positions, shape [dof].
+            current_qd: Current joint velocities, shape [dof]. Defaults to zeros.
+
+        Returns:
+            JointState of the trajectory or None if planning failed.
+        """
+
+        if current_qd is None:
+            current_qd = torch.zeros_like(current_q)
+
+        dof_needed = len(self.target_joint_names)
+        for name, q in [("current_q", current_q), ("target_q", target_q)]:
+            if len(q) < dof_needed:
+                pad = torch.zeros(dof_needed - len(q), dtype=q.dtype)
+                q = torch.concatenate([q, pad], axis=0)
+            elif len(q) > dof_needed:
+                q = q[:dof_needed]
+            if name == "current_q":
+                current_q = q
+            else:
+                target_q = q
+
+        if len(current_qd) < dof_needed:
+            current_qd = torch.concatenate([current_qd, torch.zeros(dof_needed - len(current_qd), dtype=current_qd.dtype)])
+        elif len(current_qd) > dof_needed:
+            current_qd = current_qd[:dof_needed]
+
+        start_state = JointState(
+            position=self._to_curobo_device(current_q),
+            velocity=self._to_curobo_device(current_qd) * 0.0,
+            acceleration=self._to_curobo_device(current_qd) * 0.0,
+            jerk=self._to_curobo_device(current_qd) * 0.0,
+            joint_names=self.target_joint_names,
+        )
+        goal_state = JointState(
+            position=self._to_curobo_device(target_q),
+            velocity=self._to_curobo_device(torch.zeros_like(target_q)),
+            acceleration=self._to_curobo_device(torch.zeros_like(target_q)),
+            jerk=self._to_curobo_device(torch.zeros_like(target_q)),
+            joint_names=self.target_joint_names,
+        )
+
+        start_state = start_state.get_ordered_joint_state(self.target_joint_names)
+        goal_state = goal_state.get_ordered_joint_state(self.target_joint_names)
+
+        result = self.motion_gen.plan_single_js(
+            start_state.unsqueeze(0),
+            goal_state.unsqueeze(0),
+            self.plan_config.clone(),
+        )
+
+        if result.success.item():
+            current_plan = result.get_interpolated_plan()
+            motion_plan = current_plan.get_ordered_joint_state(self.target_joint_names)
+            self._logger.debug(f"joint-space planning succeeded with {len(motion_plan.position)} waypoints")
+            return motion_plan
+        else:
+            self._logger.warning(f"joint-space planning failed: {result.status}")
+            return None
 
     def reset(self):
         """reset the planner state"""

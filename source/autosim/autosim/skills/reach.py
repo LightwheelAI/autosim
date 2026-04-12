@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import isaaclab.utils.math as PoseUtils
 import torch
 from isaaclab.envs import ManagerBasedEnv
@@ -246,33 +248,39 @@ class ReachSkill(CuroboSkillBase):
         IMPORTANT: the robot root frame is not the same as the robot base frame.
         """
 
-        target_object = skill_info.target_object
-        robot = env.scene[env_extra_info.robot_name]
+        Args:
+            reach_offset: [7] tensor (pos + quat) in object frame for the primary EE.
+            extra_offsets: per-EE offsets in object frame, or None.
 
-        object_pose_in_env = env.scene[target_object].data.root_pose_w
-        object_pos_in_env, object_quat_in_env = object_pose_in_env[:, :3], object_pose_in_env[:, 3:]
+        Returns:
+            SkillGoal with target poses expressed in robot root frame, or None on failure.
+        """
 
-        reach_target_pose = env_extra_info.get_next_reach_target_pose(target_object)
-        reach_target_pose = reach_target_pose.to(env.device)
-        reach_target_pose_in_object = reach_target_pose.unsqueeze(0)
-        reach_target_pos_in_object, reach_target_quat_in_object = (
-            reach_target_pose_in_object[:, :3],
-            reach_target_pose_in_object[:, 3:],
-        )
+        try:
+            object_pose_in_env = env.scene[target_object].data.root_pose_w
+        except Exception:
+            self._logger.warning(f"could not read pose for '{target_object}', skipping")
+            return None
 
+        object_pos_in_env = object_pose_in_env[:, :3]
+        object_quat_in_env = object_pose_in_env[:, 3:]
+
+        offset = reach_offset.to(env.device).unsqueeze(0)
         reach_target_pos_in_env, reach_target_quat_in_env = PoseUtils.combine_frame_transforms(
-            object_pos_in_env, object_quat_in_env, reach_target_pos_in_object, reach_target_quat_in_object
+            object_pos_in_env, object_quat_in_env, offset[:, :3], offset[:, 3:]
         )
         self._logger.info(f"Reach target position in environment: {reach_target_pos_in_env}")
         self._logger.info(f"Reach target quaternion in environment: {reach_target_quat_in_env}")
         self._target_poses["target_pose"] = torch.cat((reach_target_pos_in_env, reach_target_quat_in_env), dim=-1)
 
-        robot_root_pose_in_env = robot.data.root_pose_w
-        robot_root_pos_in_env, robot_root_quat_in_env = robot_root_pose_in_env[:, :3], robot_root_pose_in_env[:, 3:]
+        robot = env.scene[robot_name]
+        robot_root_pos_in_env = robot.data.root_pose_w[:, :3]
+        robot_root_quat_in_env = robot.data.root_pose_w[:, 3:]
 
-        reach_target_pos_in_robot_root, reach_target_quat_in_robot_root = PoseUtils.subtract_frame_transforms(
+        reach_target_pos_in_root, reach_target_quat_in_root = PoseUtils.subtract_frame_transforms(
             robot_root_pos_in_env, robot_root_quat_in_env, reach_target_pos_in_env, reach_target_quat_in_env
         )
+        target_pose = torch.cat((reach_target_pos_in_root, reach_target_quat_in_root), dim=-1).squeeze(0)
 
         target_pose = torch.cat((reach_target_pos_in_robot_root, reach_target_quat_in_robot_root), dim=-1).squeeze(0)
         activate_q, _ = self._build_activate_joint_state(
@@ -281,6 +289,57 @@ class ReachSkill(CuroboSkillBase):
         extra_target_poses = self._build_extra_target_poses(activate_q, target_pose, env_extra_info)
 
         return SkillGoal(target_object=target_object, target_pose=target_pose, extra_target_poses=extra_target_poses)
+
+    def extract_goal_from_info(
+        self, skill_info: SkillInfo, env: ManagerBasedEnv, env_extra_info: EnvExtraInfo
+    ) -> SkillGoal:
+        """Return the target pose[x, y, z, qw, qx, qy, qz] in the robot root frame.
+        IMPORTANT: the robot root frame is not the same as the robot base frame.
+        """
+
+        target_object = skill_info.target_object
+
+        reach_offset = env_extra_info.get_next_reach_target_pose(target_object).to(env.device)
+
+        extra_offsets: dict[str, torch.Tensor] | None = None
+        if target_object in env_extra_info.object_extra_reach_target_poses:
+            extra_offsets = {
+                ee_name: torch.as_tensor(
+                    env_extra_info.get_next_extra_reach_target_pose(target_object, ee_name), device=env.device
+                )
+                for ee_name in env_extra_info.object_extra_reach_target_poses[target_object]
+            }
+
+        # Save state needed for corrective reach re-planning
+        self._saved_env = env
+        self._saved_robot_name = env_extra_info.robot_name
+        self._saved_target_object = target_object
+        self._saved_reach_offset = reach_offset
+        self._saved_extra_offsets = extra_offsets
+
+        return self._compute_goal_from_offset(env, env_extra_info.robot_name, target_object, reach_offset, extra_offsets)
+
+    def _compute_corrective_goal(self) -> SkillGoal | None:
+        """Re-compute reach goal using the object's current actual pose.
+
+        This is called after the first trajectory finishes. The same relative offset (in object
+        frame) is re-applied to the object's current pose, so if the object was nudged during
+        approach the robot corrects for it.
+        """
+
+        if self._saved_env is None or self._saved_target_object is None or self._saved_reach_offset is None:
+            return None
+
+        goal = self._compute_goal_from_offset(
+            self._saved_env,
+            self._saved_robot_name,
+            self._saved_target_object,
+            self._saved_reach_offset,
+            self._saved_extra_offsets,
+        )
+        if goal is not None:
+            self._logger.info("corrective_reach: recomputed target from current object pose")
+        return goal
 
     def execute_plan(self, state: WorldState, goal: SkillGoal) -> bool:
         """Execute the plan of the reach skill."""
@@ -328,6 +387,18 @@ class ReachSkill(CuroboSkillBase):
             done = False
             self._step_idx += 1
 
+        # Corrective reach: when the first trajectory finishes, re-plan using the object's
+        # actual current position in case it was nudged during approach.
+        if done and not self._corrective_reach_done and self.cfg.extra_cfg.corrective_reach:
+            self._corrective_reach_done = True  # prevent infinite loop
+            new_goal = self._compute_corrective_goal()
+            if new_goal is not None:
+                self._logger.info("corrective_reach: re-planning to corrected object pose")
+                self._step_idx = 0
+                plan_success = self.execute_plan(state, new_goal)
+                if plan_success:
+                    done = False  # continue with corrective trajectory
+
         curobo_joint_names = self._trajectory.joint_names
         sim_joint_names = state.sim_joint_names
         joint_pos = state.robot_joint_pos.clone()
@@ -348,3 +419,9 @@ class ReachSkill(CuroboSkillBase):
         super().reset()
         self._step_idx = 0
         self._trajectory = None
+        self._corrective_reach_done = False
+        self._saved_env = None
+        self._saved_robot_name = None
+        self._saved_target_object = None
+        self._saved_reach_offset = None
+        self._saved_extra_offsets = None

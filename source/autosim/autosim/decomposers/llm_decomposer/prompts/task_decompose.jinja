@@ -49,7 +49,7 @@ Output the task decomposition result in JSON format with the following fields:
     - description: Description (string)
     - skills: Skill sequence, each skill containing:
         - step: Step number (integer, globally incrementing)
-        - skill_type: Skill type (must be one of the 6 atomic skills)
+        - skill_type: Skill type (must be one of the available atomic skills listed above)
         - target_object: Target object name (string)
         - target_type: Target type - "object", "fixture", "interactive_element", or "position"
         - description: Step description (string)
@@ -84,6 +84,13 @@ Output the task decomposition result in JSON format with the following fields:
     ```
 
 6. **Combined Patterns**: For complex tasks, combine multiple patterns in sequence.
+
+7. **Retract Pattern** (for returning the arm to its home/safe configuration after completing a task):
+    ```
+    ... (task skills) → retract(none)
+    ```
+    Use `retract` when the task explicitly requires the arm to return to a safe/home pose after completion.
+    The `target_object` field for retract should be set to `"none"` or an empty string since it has no target.
 
 ## Planning Strategy
 1. **Start with success conditions**: Check the success conditions first to understand what needs to be achieved

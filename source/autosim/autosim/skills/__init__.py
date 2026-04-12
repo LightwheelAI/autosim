@@ -12,6 +12,7 @@ from .relative_reach import (
     PushSkill,
     PushSkillCfg,
 )
+from .retract import RetractSkill, RetractSkillCfg
 
 
 @configclass
@@ -25,6 +26,7 @@ class AutoSimSkillsExtraCfg:
     pull: PullSkillCfg = PullSkillCfg()
     push: PushSkillCfg = PushSkillCfg()
     reach: ReachSkillCfg = ReachSkillCfg()
+    retract: RetractSkillCfg = RetractSkillCfg()
 
     def get(cls, skill_name: str):
         """Get the skill configuration by name."""
