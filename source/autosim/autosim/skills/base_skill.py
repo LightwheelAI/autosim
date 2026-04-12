@@ -88,9 +88,20 @@ class CuroboSkillExtraCfg(SkillExtraCfg):
     debug_target_pose: bool = False
     """Whether to debug the target pose."""
 
-    corrective_reach: bool = False
-    """If True, after the first reach trajectory completes, re-plan a second reach using the
-    object's actual current position. Useful when the robot nudges the object during approach."""
+    extra_target_link_names: list[str] = []
+    """Additional cuRobo link names constrained during planning."""
+
+    extra_target_mode: str = "keep_current"
+    """How additional cuRobo link goals are generated."""
+
+    def __post_init__(self) -> None:
+        supported_modes = {"keep_current", "keep_relative_offset", "keep_initial_relative_offset"}
+        if self.extra_target_mode not in supported_modes:
+            raise ValueError(
+                f"Unsupported extra_target_mode: {self.extra_target_mode}. Supported modes: {sorted(supported_modes)}"
+            )
+        if len(self.extra_target_link_names) != len(set(self.extra_target_link_names)):
+            raise ValueError("extra_target_link_names must not contain duplicates.")
 
 
 class CuroboSkillBase(Skill):

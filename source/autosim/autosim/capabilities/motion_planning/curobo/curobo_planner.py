@@ -315,12 +315,10 @@ class CuroboPlanner:
             current_q = current_q[:dof_needed]
             current_qd = current_qd[:dof_needed]
 
-        # Clamp start state to joint limits to avoid INVALID_START_STATE_JOINT_LIMITS.
-        # joint_limits.position shape: [2, n_joints], row 0 = lower, row 1 = upper.
         joint_limits = self.motion_gen.kinematics.get_joint_limits()
-        q_lo = joint_limits.position[0]
-        q_hi = joint_limits.position[1]
-        current_q = torch.clamp(self._to_curobo_device(current_q), q_lo, q_hi).to(current_q.device)
+        current_q = torch.clamp(
+            self._to_curobo_device(current_q), joint_limits.position[0], joint_limits.position[1]
+        ).to(current_q.device)
 
         # build the target pose
         goal = Pose(
@@ -595,8 +593,26 @@ class CuroboPlanner:
     def get_ee_pose(self, current_q: torch.Tensor) -> Pose:
         """Get the end-effector pose of the robot."""
 
+        return self.get_link_pose(current_q, self.motion_gen.kinematics.ee_link)
+
+    def get_link_pose(self, current_q: torch.Tensor, link_name: str) -> Pose:
+        """Get the pose of a specific link in the robot root frame."""
+
+        return self.get_link_poses(current_q, [link_name])[link_name]
+
+    def get_link_poses(self, current_q: torch.Tensor, link_names: list[str]) -> dict[str, Pose]:
+        """Get the poses of specific links in the robot root frame."""
+
         current_joint_state = JointState(
             position=self._to_curobo_device(current_q), joint_names=self.target_joint_names
         )
         kin_state = self.motion_gen.compute_kinematics(current_joint_state)
-        return kin_state.link_poses[self.motion_gen.kinematics.ee_link]
+
+        missing_link_names = [link_name for link_name in link_names if link_name not in kin_state.link_poses]
+        if missing_link_names:
+            raise ValueError(
+                f"Unknown cuRobo link name(s): {missing_link_names}. Available links:"
+                f" {list(kin_state.link_poses.keys())}"
+            )
+
+        return {link_name: kin_state.link_poses[link_name] for link_name in link_names}
