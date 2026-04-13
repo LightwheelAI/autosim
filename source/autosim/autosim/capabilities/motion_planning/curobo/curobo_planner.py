@@ -3,10 +3,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import torch
 from curobo.cuda_robot_model.util import load_robot_yaml
-
 from curobo.geom.types import WorldConfig
 from curobo.rollout.cost.pose_cost import PoseCostMetric
 from curobo.types.base import TensorDeviceType
@@ -379,7 +377,6 @@ class CuroboPlanner:
             self._logger.warning(f"planning failed: {result.status}")
             return None
 
-
     def plan_motion_batch(
         self,
         target_pos: torch.Tensor,
@@ -548,7 +545,9 @@ class CuroboPlanner:
                 target_q = q
 
         if len(current_qd) < dof_needed:
-            current_qd = torch.concatenate([current_qd, torch.zeros(dof_needed - len(current_qd), dtype=current_qd.dtype)])
+            current_qd = torch.concatenate(
+                [current_qd, torch.zeros(dof_needed - len(current_qd), dtype=current_qd.dtype)]
+            )
         elif len(current_qd) > dof_needed:
             current_qd = current_qd[:dof_needed]
 

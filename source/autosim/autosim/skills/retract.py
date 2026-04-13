@@ -19,6 +19,7 @@ from .base_skill import CuroboSkillBase, CuroboSkillExtraCfg
 @configclass
 class RetractSkillExtraCfg(CuroboSkillExtraCfg):
     """Extra configuration for the retract skill."""
+
     pass
 
 
@@ -76,9 +77,7 @@ class RetractSkill(CuroboSkillBase):
                 activate_q.append(full_sim_q[idx])
                 activate_qd.append(full_sim_qd[idx])
             else:
-                raise ValueError(
-                    f"Joint {joint_name} in planner joints is not in simulation joint names."
-                )
+                raise ValueError(f"Joint {joint_name} in planner joints is not in simulation joint names.")
         activate_q = torch.stack(activate_q, dim=0)
         activate_qd = torch.stack(activate_qd, dim=0)
 
