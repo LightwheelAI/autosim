@@ -148,8 +148,6 @@ def _visualize_world_obstacles(
     planner.sync_dynamic_objects()
 
     world_model = planner.motion_gen.world_coll_checker.world_model
-    if isinstance(world_model, list):
-        world_model = world_model[env_id]
     if world_model is None:
         raise RuntimeError("cuRobo collision checker has no world model loaded.")
 
