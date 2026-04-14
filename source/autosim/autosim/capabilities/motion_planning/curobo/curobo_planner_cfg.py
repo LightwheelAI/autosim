@@ -58,8 +58,6 @@ class CuroboPlannerCfg:
     """List of subffixes to ignore when extracting world obstacles."""
 
     # World update strategy
-    enable_update_world_before_plan: bool = False
-    """If True, rebuild world obstacles from USD before every planning call (accurate but slower)."""
     enable_dynamic_world_sync: bool = False
     """If True, synchronize dynamic object poses into cuRobo world before planning (fast incremental update)."""
 
