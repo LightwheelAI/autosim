@@ -18,7 +18,7 @@ class LLMDecomposerCfg(DecomposerCfg):
     api_key: str = MISSING
     """The API key for the LLM."""
 
-    base_url: str = "https://api.chatanywhere.org/v1"  # TODO: change here.
+    base_url: str = "https://api.openai.com/v1"
     """The base URL for the LLM API."""
 
     model: str = "gpt-3.5-turbo"
@@ -29,6 +29,9 @@ class LLMDecomposerCfg(DecomposerCfg):
 
     max_tokens: int = 4000
     """The maximum number of tokens to generate."""
+
+    max_decompose_retries: int = 3
+    """Maximum number of retries if decomposition fails (JSON parse error or validation error)."""
 
     def __post_init__(self) -> None:
         super().__post_init__()

@@ -46,7 +46,9 @@ class CuroboPlannerCfg:
     """Maximum number of planning attempts."""
     time_dilation_factor: float = 0.5
     """Time dilation factor for planning."""
-
+    reach_partial_pose_weight: list[float] | None = None
+    """Per-axis weights [rx, ry, rz, px, py, pz] for partial-pose reaching via cuRobo PoseCostMetric.
+    Setting a weight to 0.0 relaxes that axis (e.g. [0,0,0,1,1,1] for position-only reaching)."""
     # Optional prim path configuration
     robot_prim_path: str | None = None
     """Absolute USD prim path to the robot root for world extraction; None derives it from environment root."""
@@ -54,6 +56,10 @@ class CuroboPlannerCfg:
     """List of subffixes to only extract world obstacles from."""
     world_ignore_subffixes: list[str] | None = None
     """List of subffixes to ignore when extracting world obstacles."""
+
+    # World update strategy
+    enable_dynamic_world_sync: bool = False
+    """If True, synchronize dynamic object poses into cuRobo world before planning (fast incremental update)."""
 
     # Debug and visualization
     debug_planner: bool = False

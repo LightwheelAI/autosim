@@ -1,9 +1,9 @@
 """Visualize cuRobo world obstacles in the Isaac Sim viewport.
 
-This script reads the static obstacle world that cuRobo uses for collision checking
-(as built inside `autosim`'s `CuroboPlanner._initialize_static_world()`), converts
-all obstacle poses from the planner's reference frame (robot root) to the world frame,
-and draws simple wireframes.
+This script reads the obstacle world currently held inside cuRobo's collision checker
+(`planner.motion_gen.world_coll_checker.world_model`) and draws simple wireframes.
+Before drawing, it synchronizes dynamic rigid object poses so the visualization matches
+the obstacle poses currently used by cuRobo for collision checking.
 
 Usage
 -----
@@ -13,10 +13,8 @@ Run with Isaac Sim UI enabled (do NOT use ``--headless`` if you want to see the 
 
 Notes
 -----
-* cuRobo's `UsdHelper.get_obstacles_from_stage(..., reference_prim_path=robot_prim_path)`
-  applies an inverse reference transform, so obstacle poses are returned in the
-  **robot root frame** (not world). We therefore compose with the robot root pose
-  in world to get world-frame obstacle poses for visualization.
+* This script reads from cuRobo's live collision world instead of rebuilding from USD,
+  so reset-time pose changes for dynamic rigid objects are reflected in the visualization.
 * Wireframe drawing uses debug lines; keep the app running to inspect the scene.
 """
 
@@ -37,7 +35,6 @@ args_cli = parser.parse_args()
 
 app_launcher = AppLauncher(vars(args_cli))
 simulation_app = app_launcher.app
-
 
 import isaaclab.utils.math as PoseUtils
 
@@ -148,11 +145,11 @@ def _visualize_world_obstacles(
     max_mesh_vertices: int = 200000,
 ):
     planner = pipeline._motion_planner
-    if not hasattr(planner, "_static_world_config"):
-        raise RuntimeError(
-            "CuroboPlanner has no `_static_world_config`. Ensure planner initialized and warmup complete."
-        )
-    world_r = planner._static_world_config  # WorldConfig in robot root frame
+    planner.sync_dynamic_objects()
+
+    world_model = planner.motion_gen.world_coll_checker.world_model
+    if world_model is None:
+        raise RuntimeError("cuRobo collision checker has no world model loaded.")
 
     robot_root_pose_w = pipeline._robot.data.root_pose_w[env_id].detach()
     device = robot_root_pose_w.device
@@ -160,8 +157,10 @@ def _visualize_world_obstacles(
 
     clear_debug_drawing()
 
+    # NOTE: poses in the world_model are in the robot-root frame
+
     # Cuboids (OBB pose + dims)
-    for cub in world_r.cuboid:
+    for cub in world_model.cuboid:
         pose_r = _as_pose7(cub.pose, device=device, dtype=dtype)
         pose_w = _compose_robot_to_world(robot_root_pose_w=robot_root_pose_w, pose_r=pose_r)
         dims = torch.as_tensor(cub.dims, device=device, dtype=dtype).view(3)
@@ -169,7 +168,7 @@ def _visualize_world_obstacles(
         _draw_oriented_box(pose_w=pose_w, half_dims_xyz=half_dims, color=color, thickness=thickness, z_lift=z_lift)
 
     # Spheres (pose center + radius) -> draw as cube approximation
-    for sph in world_r.sphere:
+    for sph in world_model.sphere:
         pose_r = _as_pose7(sph.pose, device=device, dtype=dtype)
         pose_w = _compose_robot_to_world(robot_root_pose_w=robot_root_pose_w, pose_r=pose_r)
         r = float(sph.radius)
@@ -177,7 +176,7 @@ def _visualize_world_obstacles(
         _draw_oriented_box(pose_w=pose_w, half_dims_xyz=half_dims, color=color, thickness=thickness, z_lift=z_lift)
 
     # Cylinders (pose + radius + height) -> draw as oriented bounding box approximation
-    for cyl in world_r.cylinder:
+    for cyl in world_model.cylinder:
         pose_r = _as_pose7(cyl.pose, device=device, dtype=dtype)
         pose_w = _compose_robot_to_world(robot_root_pose_w=robot_root_pose_w, pose_r=pose_r)
         half_dims = torch.tensor(
@@ -186,7 +185,7 @@ def _visualize_world_obstacles(
         _draw_oriented_box(pose_w=pose_w, half_dims_xyz=half_dims, color=color, thickness=thickness, z_lift=z_lift)
 
     # Capsules (pose + radius + base/tip) -> draw as oriented bounding box approximation
-    for cap in world_r.capsule:
+    for cap in world_model.capsule:
         pose_r = _as_pose7(cap.pose, device=device, dtype=dtype)
         pose_w = _compose_robot_to_world(robot_root_pose_w=robot_root_pose_w, pose_r=pose_r)
         base = torch.as_tensor(cap.base, device=device, dtype=dtype).view(3)
@@ -196,7 +195,7 @@ def _visualize_world_obstacles(
         _draw_oriented_box(pose_w=pose_w, half_dims_xyz=half_dims, color=color, thickness=thickness, z_lift=z_lift)
 
     # Mesh obstacles: prefer a tight OBB via cuRobo's `Mesh.get_cuboid()`.
-    for mesh in world_r.mesh:
+    for mesh in world_model.mesh:
         verts = getattr(mesh, "vertices", None)
         if verts is not None and len(verts) > int(max_mesh_vertices):
             continue
