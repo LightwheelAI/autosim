@@ -57,7 +57,7 @@ class CuroboPlannerCfg:
     world_ignore_subffixes: list[str] | None = None
     """List of subffixes to ignore when extracting world obstacles."""
 
-    # World update strategy (A-scope migration from lwautosim/collide-align)
+    # World update strategy
     enable_update_world_before_plan: bool = False
     """If True, rebuild world obstacles from USD before every planning call (accurate but slower)."""
     enable_dynamic_world_sync: bool = False
