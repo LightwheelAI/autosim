@@ -283,7 +283,7 @@ class ReachSkill(CuroboSkillBase):
         reach_target_pos_in_env, reach_target_quat_in_env = PoseUtils.combine_frame_transforms(
             object_pos_in_env, object_quat_in_env, offset[:, :3], offset[:, 3:]
         )
-        self._logger.debug(f"Reach target pose in environment: {reach_target_pos_in_env}")
+        self._logger.debug(f"Reach target position in environment: {reach_target_pos_in_env}")
         self._logger.debug(f"Reach target quaternion in environment: {reach_target_quat_in_env}")
         self._target_poses["target_pose"] = torch.cat((reach_target_pos_in_env, reach_target_quat_in_env), dim=-1)
 
