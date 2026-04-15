@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from typing import TYPE_CHECKING, Any, Protocol
+
+from autosim.core.logger import AutoSimLogger
 
 if TYPE_CHECKING:
     from autosim.core.pipeline import AutoSimPipeline as Pipeline
     from autosim.core.skill import Skill, SkillExtraCfg
+
+_logger = AutoSimLogger("AutoSimRegistration")
 
 
 """Pipeline Registration System
@@ -25,8 +30,8 @@ Usage:
     >>>     cfg_entry_point="autosim.pipelines:MyPipelineCfg",
     >>> )
 
-    # 2. Create a pipeline instance
-    >>> pipeline = make_pipeline("MyPipeline-v0")
+    # 2. Create a pipeline instance (with optional config overrides)
+    >>> pipeline = make_pipeline("MyPipeline-v0", max_steps=1000)
     >>> pipeline.run()
 
     # 3. List all registered pipelines
@@ -116,8 +121,15 @@ def _load_creator(creator: str | PipelineCreator | ConfigCreator) -> PipelineCre
 
 def make_pipeline(
     id: str,
+    **cfg_overrides: Any,
 ) -> Pipeline:
-    """Create a pipeline instance from the registry."""
+    """Create a pipeline instance from the registry.
+
+    Args:
+        id: The registered pipeline ID.
+        **cfg_overrides: Optional keyword arguments to override default config values.
+            Keys that are None or not present in the config will be skipped.
+    """
 
     if id not in pipeline_registry:
         raise ValueError(
@@ -131,7 +143,18 @@ def make_pipeline(
 
     # Instantiate the pipeline
     try:
-        cfg = cfg_creator()
+        # Filter cfg_overrides: skip None values and unknown fields
+        valid_overrides = {}
+        cfg_field_names = {f.name for f in dataclass_fields(cfg_creator)}
+        for key, value in cfg_overrides.items():
+            if value is None:
+                _logger.warning(f"Skipping cfg override '{key}' because its value is None.")
+                continue
+            if key not in cfg_field_names:
+                _logger.warning(f"Skipping cfg override '{key}' because it does not exist in {cfg_creator.__name__}.")
+                continue
+            valid_overrides[key] = value
+        cfg = cfg_creator(**valid_overrides)
         pipeline = pipeline_creator(cfg=cfg)
     except TypeError as e:
         entry_point_str = entry.entry_point if isinstance(entry.entry_point, str) else str(entry.entry_point)
