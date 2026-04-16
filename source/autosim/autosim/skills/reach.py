@@ -303,6 +303,64 @@ class ReachSkill(CuroboSkillBase):
 
         return SkillGoal(target_object=target_object, target_pose=target_pose, extra_target_poses=extra_target_poses)
 
+    def _select_best_candidate(
+        self,
+        env: ManagerBasedEnv,
+        target_object: str,
+        candidates: list[torch.Tensor],
+        env_extra_info: EnvExtraInfo,
+    ) -> torch.Tensor:
+        """Select the closest reach candidate in the target object's frame.
+
+        The current end-effector pose is transformed from world frame into the target
+        object's frame and compared against all candidate poses stored in object frame.
+        Selection is based on a weighted score consisting of position error plus
+        orientation error.
+
+        Args:
+            env: The Isaac Lab environment.
+            target_object: Name of the target object in the scene.
+            candidates: List of K ``[7]`` tensors ``(pos + quat)`` in object frame.
+            env_extra_info: Environment extra information.
+
+        Returns:
+            The selected ``[7]`` offset tensor in object frame.
+
+        Raises:
+            ValueError: If candidates is empty.
+        """
+
+        if not candidates:
+            raise ValueError(f"No reach candidates provided for object '{target_object}'.")
+
+        poses_oe = torch.stack([c.to(env.device) for c in candidates], dim=0)  # [K, 7]
+
+        robot = env.scene[env_extra_info.robot_name]
+        ee_link_idx = robot.data.body_names.index(env_extra_info.ee_link_name)
+        ee_pose_w = robot.data.body_link_pose_w[0, ee_link_idx]  # [7]
+        obj_pose_w = env.scene[target_object].data.root_pose_w[0]  # [7]
+
+        ee_pos_oe, ee_quat_oe = PoseUtils.subtract_frame_transforms(
+            obj_pose_w[:3].unsqueeze(0),
+            obj_pose_w[3:].unsqueeze(0),
+            ee_pose_w[:3].unsqueeze(0),
+            ee_pose_w[3:].unsqueeze(0),
+        )
+        ee_pos_oe = ee_pos_oe.squeeze(0)  # [3]
+        ee_quat_oe = ee_quat_oe.squeeze(0)  # [4]
+
+        pos_err = torch.linalg.norm(poses_oe[:, :3] - ee_pos_oe.unsqueeze(0), dim=-1)
+        quat_dot = torch.sum(poses_oe[:, 3:] * ee_quat_oe.unsqueeze(0), dim=-1).abs().clamp(max=1.0)
+        rot_err = 1.0 * torch.acos(quat_dot)
+        score = pos_err + 1.0 * rot_err
+
+        best_idx = int(torch.argmin(score).item())
+        self._logger.debug(
+            f"Selected candidate {best_idx}/{len(candidates)} for '{target_object}' "
+            f"(position_error={float(pos_err[best_idx]):.4f}, rotation_error={float(rot_err[best_idx]):.4f})"
+        )
+        return candidates[best_idx]
+
     def _compute_corrective_goal(self) -> SkillGoal | None:
         """Re-compute reach goal using the object's current actual pose.
 
@@ -329,7 +387,8 @@ class ReachSkill(CuroboSkillBase):
         """
 
         target_object = skill_info.target_object
-        reach_offset = env_extra_info.get_next_reach_target_pose(target_object).to(env.device)
+        candidates = env_extra_info.get_reach_target_poses(target_object)
+        reach_offset = self._select_best_candidate(env, target_object, candidates, env_extra_info).to(env.device)
 
         # Save state needed for corrective reach re-planning
         self._saved_env = env

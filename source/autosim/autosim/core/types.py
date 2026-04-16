@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -85,7 +84,12 @@ class EnvExtraInfo:
     """The name of the end-effector link."""
 
     object_reach_target_poses: dict[str, list[torch.Tensor]] = field(default_factory=dict)
-    """The reach target poses in the objects frame. each object can have a list of reach target poses [x, y, z, qw, qx, qy, qz] in the order of execution."""
+    """The reach target poses in the objects frame.
+
+    Each object maps to a list of candidate reach target poses ``[x, y, z, qw, qx, qy, qz]``.
+    When a reach skill is executed, the candidate closest to the robot end-effector's current
+    pose in the object frame is selected.
+    """
 
     object_navigate_sample_range: dict[str, tuple[float, float]] = field(default_factory=dict)
     """The sample range for the navigate skill. each object can have a tuple of (min_angle, max_angle) in radians."""
@@ -99,20 +103,10 @@ class EnvExtraInfo:
     def reset(self) -> None:
         """Reset the environment extra information."""
         self.cached_initial_extra_target_offsets = None
-        self._reset_target_pose_iterators()
 
-    def _reset_target_pose_iterators(self) -> None:
-        """Reset internal iterators so target poses are consumed from the start."""
-        self._object_reach_target_poses_iterator_dict = {
-            object_name: self._build_iterator(reach_target_poses)
-            for object_name, reach_target_poses in self.object_reach_target_poses.items()
-        }
-
-    def _build_iterator(self, value_list: list[torch.Tensor]) -> Iterator[torch.Tensor]:
-        yield from value_list
-
-    def get_next_reach_target_pose(self, object_name: str) -> torch.Tensor:
-        return next(self._object_reach_target_poses_iterator_dict[object_name])
+    def get_reach_target_poses(self, object_name: str) -> list[torch.Tensor]:
+        """Return all candidate reach target posses for the given object."""
+        return self.object_reach_target_poses[object_name]
 
     def get_navigate_sample_range(self, object_name: str) -> tuple[float, float]:
         return self.object_navigate_sample_range.get(object_name, (0.0, 2 * np.pi))
