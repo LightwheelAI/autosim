@@ -4,7 +4,12 @@ import argparse
 
 from isaaclab.app import AppLauncher
 
-parser = argparse.ArgumentParser(description="Sample dx/dy/dz/yaw around base reach pose and batch-plan with cuRobo.")
+parser = argparse.ArgumentParser(
+    description=(
+        "Uniformly sample different object yaw rotations, select the runtime reach candidate, and sweep locally with"
+        " cuRobo."
+    )
+)
 parser.add_argument("--pipeline_id", required=True, type=str)
 parser.add_argument(
     "--reach_skill_index",
@@ -19,6 +24,12 @@ parser.add_argument("--dz", default=0.01, type=float, help="dz range is [-dz, dz
 parser.add_argument("--yaw_deg", default=10.0, type=float, help="yaw range is [-yaw_deg, yaw_deg] degrees")
 parser.add_argument("--seed", default=42, type=int)
 parser.add_argument("--top_k", default=10, type=int)
+parser.add_argument(
+    "--num_object_rotations",
+    default=4,
+    type=int,
+    help="Number of uniformly sampled object yaw rotations in [0, 360) degrees.",
+)
 parser.add_argument(
     "--ik_only",
     action="store_true",
@@ -57,6 +68,7 @@ def main() -> None:
             ),
             top_k=args_cli.top_k,
             ik_only=args_cli.ik_only,
+            num_object_rotations=args_cli.num_object_rotations,
         ),
     )
 
