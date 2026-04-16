@@ -385,6 +385,10 @@ class CuroboPlanner:
             `retime_trajectory` does not support batch results.
         """
 
+        # Dynamic object pose sync before planning (cheap, incremental).
+        if self.cfg.enable_dynamic_world_sync:
+            self.sync_dynamic_objects()
+
         if target_pos.ndim != 2 or target_pos.shape[-1] != 3:
             raise ValueError(f"target_pos must have shape [K, 3], got {tuple(target_pos.shape)}")
         if target_quat.ndim != 2 or target_quat.shape[-1] != 4:
@@ -460,6 +464,10 @@ class CuroboPlanner:
             IKResult from cuRobo. Check result.success[k], result.position_error[k],
             result.rotation_error[k] for each batch index.
         """
+
+        # Dynamic object pose sync before planning (cheap, incremental).
+        if self.cfg.enable_dynamic_world_sync:
+            self.sync_dynamic_objects()
 
         if target_pos.ndim != 2 or target_pos.shape[-1] != 3:
             raise ValueError(f"target_pos must have shape [K, 3], got {tuple(target_pos.shape)}")
