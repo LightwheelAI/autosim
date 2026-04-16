@@ -310,11 +310,12 @@ class ReachSkill(CuroboSkillBase):
         candidates: list[torch.Tensor],
         env_extra_info: EnvExtraInfo,
     ) -> torch.Tensor:
-        """Select the candidate closest to the current EE pose in object frame.
+        """Select the closest reach candidate in the target object's frame.
 
         The current end-effector pose is transformed from world frame into the target
-        object's frame, then compared against all candidate poses in object frame.
-        The candidate with the smallest combined position/orientation score is used.
+        object's frame and compared against all candidate poses stored in object frame.
+        Selection is based on a weighted score consisting of position error plus
+        orientation error.
 
         Args:
             env: The Isaac Lab environment.
